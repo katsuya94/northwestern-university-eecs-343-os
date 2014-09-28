@@ -102,6 +102,7 @@ void RunCmd(commandT** cmd, int n)
   }
 }
 
+/* fork() system call - copies address space but stops parent execution */
 void RunCmdFork(commandT* cmd, bool fork)
 {
   if (cmd->argc<=0)
@@ -123,14 +124,17 @@ void RunCmdBg(commandT* cmd)
 
 void RunCmdPipe(commandT* cmd1, commandT* cmd2)
 {
+  // TODO
 }
 
 void RunCmdRedirOut(commandT* cmd, char* file)
 {
+  // TODO
 }
 
 void RunCmdRedirIn(commandT* cmd, char* file)
 {
+  // TODO
 }
 
 
@@ -195,6 +199,7 @@ static bool ResolveExternalCmd(commandT* cmd)
 
 static void Exec(commandT* cmd, bool forceFork)
 {
+  // TODO
 }
 
 static bool IsBuiltIn(char* cmd)
@@ -205,10 +210,12 @@ static bool IsBuiltIn(char* cmd)
 
 static void RunBuiltInCmd(commandT* cmd)
 {
+  // TODO
 }
 
 void CheckJobs()
 {
+  // TODO
 }
 
 

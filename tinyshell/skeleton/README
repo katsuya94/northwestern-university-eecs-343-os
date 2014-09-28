@@ -36,7 +36,7 @@ tsh.1 - For a man page on your tsh
 
 grading-guide.txt - Grading policy and general guide. It tells you
 	what we are looking for, explains how we grade your project,
-	what the test cases are and how we use them.
+what the test cases are and how we use them.
 
 testsuite - A directory including the test cases described in
 	grading-guide.txt, as well as the test harness.

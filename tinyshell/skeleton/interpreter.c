@@ -142,6 +142,8 @@ void Interpret(char* cmdLine)
 
   if(cmdLine[0] == '\0') return;
 
+  /* loop through command line and check for single and double quote pairs */
+  /* counts the number of tasks (where tasks are separated by pipes) that are not in quotations */
   for(i = 0; i < strlen(cmdLine); i++){
     if(cmdLine[i] == '\''){
       if(quotation2) continue;
@@ -163,15 +165,19 @@ void Interpret(char* cmdLine)
     }
   }
 
+  /* allocates references to tasks */
   command = (commandT **) malloc(sizeof(commandT *) * task);
   i = strlen(cmdLine) - 1;
+  /* trimming white space */
   while(i >= 0 && cmdLine[i] == ' ') i--;
+  /* checks for & and sets background task flag */
   if(cmdLine[i] == '&'){
     if(i == 0) return;
     bg = 1;
     cmdLine[i] = '\0';
   }
 
+  /* calls parser_single on the tasks */
   quotation1 = quotation2 = 0;
   task = 0;
   k = strlen(cmdLine);
@@ -197,6 +203,9 @@ void Interpret(char* cmdLine)
     }
   }
   parser_single(&(cmdLine[i-j]), j, &(command[task]),bg);
+
+  /* parser_single fills the command struct with the information from commandline */
+  /* command points to the block of memory which holds the command structs */
 
   RunCmd(command, task+1);
   free(command);

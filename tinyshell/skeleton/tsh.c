@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <stdio.h>
 
 /************Private include**********************************************/
 #include "tsh.h"
@@ -71,6 +72,8 @@ int main (int argc, char *argv[])
 
   while (!forceExit) /* repeat forever */
   {
+    printf("tsh> ");
+
     /* read command line */
     getCommandLine(&cmdLine, BUFSIZE);
 
@@ -81,6 +84,7 @@ int main (int argc, char *argv[])
     }
 
     /* checks the status of background jobs */
+    /* TODO in runtime.c */
     CheckJobs();
 
     /* interpret command and line
