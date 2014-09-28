@@ -206,6 +206,20 @@ void Interpret(char* cmdLine)
 
   /* parser_single fills the command struct with the information from commandline */
   /* command points to the block of memory which holds the command structs */
+  for(i = 0; i < task + 1; i++) {
+    commandT* cmd = command[i];
+    printf("name = %s\n", cmd->name);
+    printf("cmdline = %s\n", cmd->cmdline);
+    printf("redirect_in = %s\n", cmd->redirect_in);
+    printf("redirect_out = %s\n", cmd->redirect_out);
+    printf("is_redirect_in = %d\n", cmd->is_redirect_in);
+    printf("is_redirect_out = %d\n", cmd->is_redirect_out);
+    printf("bg = %d\n", cmd->bg);
+    printf("argc = %d\n", cmd->argc);
+    for(int j = 0; j < cmd->argc; j++) {
+      printf("argv[%d] = %s\n", j, cmd->argv[j]);
+    }
+  }
 
   RunCmd(command, task+1);
   free(command);
