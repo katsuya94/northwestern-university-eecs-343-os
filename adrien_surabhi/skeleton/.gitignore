@@ -1,4 +1,4 @@
-*.tar
+*.tar.gz
 tsh
 testsuite/myspin
 testsuite/mysplit

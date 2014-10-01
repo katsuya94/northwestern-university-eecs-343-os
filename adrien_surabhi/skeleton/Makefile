@@ -18,7 +18,7 @@
 ###############################################################################
 
 # handin info
-TEAM = adrien_surabhi
+TEAM = "adrien_surabhi"
 VERSION = `date +%Y%m%d%H%M%S`
 PROJ = tsh
 
