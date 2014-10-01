@@ -1,2 +1,5 @@
 *.tar
 tsh
+testsuite/myspin
+testsuite/mysplit
+testsuite/mystop
