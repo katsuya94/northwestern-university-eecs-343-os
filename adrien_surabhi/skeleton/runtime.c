@@ -238,12 +238,6 @@ static void Exec(commandT* cmd, bool forceFork)
       int status = 0;
       waitpid(child_pid, &status, 0);
       printf("status: %d\n", WEXITSTATUS(status));
-      bgjobL* job = bgjobs;
-      while (job != NULL) {
-        int terminated_pid = waitpid(job->pid, NULL, WNOHANG);
-        printf("terminated_pid: %d\n", terminated_pid);
-        job = job->next;
-      }
     } else {
       printf ("child process ID is %d\n", (int) getpid()); 
       execv(cmd->name, cmd->argv);
@@ -264,6 +258,14 @@ static void RunBuiltInCmd(commandT* cmd)
 
 void CheckJobs()
 {
+  bgjobL* job = bgjobs;
+  while (job != NULL) {
+    int terminated_pid = waitpid(job->pid, NULL, WNOHANG);
+    if (terminated_pid > 0) {
+      printf("terminated_pid: %d\n", terminated_pid);
+    }
+    job = job->next;
+  }
 }
 
 
