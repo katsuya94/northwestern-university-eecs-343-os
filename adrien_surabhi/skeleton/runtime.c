@@ -215,9 +215,9 @@ static void Exec(commandT* cmd, bool forceFork)
 
   if(pid) {
     printf("in parent\n");
-    int status;
+    int status = 0;
     waitpid(pid, &status, 0);
-    printf("status: %d\n", status);
+    printf("status: %d\n", WEXITSTATUS(status));
   } else {
     printf("in child\n");
     execv(cmd->argv[0], cmd->argv);
