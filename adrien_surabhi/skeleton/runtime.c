@@ -221,7 +221,7 @@ static void Exec(commandT* cmd, bool forceFork)
     printf("status: %d\n", WEXITSTATUS(status));
   } else {
     printf("in child\n");
-    printf ("child process ID is %d\n", chid_pid); 
+    printf ("child process ID is %d\n", child_pid); 
     execv(cmd->argv[0], cmd->argv);
     exit(2);
   }
