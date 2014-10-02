@@ -101,7 +101,12 @@ static void sig(int signo)
     printf("SIGINT\n");
   } else if (signo == SIGTSTP) {
     printf("SIGTSTP\n");
-  } else {
+  } 
+  // else if (signo == SIGQUIT)
+  //   {
+  //     printf("SIGQUIT - EXIT\n");
+  //   }
+    else {
     printf("Other SIG: %d\n", signo);
   }
 }

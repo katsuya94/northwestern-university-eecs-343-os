@@ -202,24 +202,26 @@ static void Exec(commandT* cmd, bool forceFork)
   // }
   // i++;
   // printf("argv[%d] = %d\n", i, cmd->argv[i]);
-  int pid = fork();
+  int child_pid = fork();
+ // printf (“parent process ID is %d\n”, (int) getpid ());
+  
+ //printf("PID: %d\n", child_pid);
+ /* Execution splits here */
 
-  printf("PID: %d\n", pid);
-
-  /* Execution splits here */
-
-  if(pid < 0) {
+  if(child_pid < 0) {
     printf("bad PID?\n");
     return;
   }
 
-  if(pid) {
+  if(child_pid !=0) {
     printf("in parent\n");
+    printf ("parent process ID is %d\n", (int) getpid ());
     int status = 0;
-    waitpid(pid, &status, 0);
+    waitpid(child_pid, &status, 0);
     printf("status: %d\n", WEXITSTATUS(status));
   } else {
     printf("in child\n");
+    printf ("child process ID is %d\n", chid_pid); 
     execv(cmd->argv[0], cmd->argv);
     exit(2);
   }
