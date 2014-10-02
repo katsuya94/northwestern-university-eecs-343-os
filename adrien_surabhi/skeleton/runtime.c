@@ -195,13 +195,6 @@ static bool ResolveExternalCmd(commandT* cmd)
 
 static void Exec(commandT* cmd, bool forceFork)
 {
-  // printf("Exec(): %s\n", cmd->cmdline);
-  // int i;
-  // for(i=0;i<cmd->argc;i++) {
-  //   printf("argv[%d] = %s\n", i, cmd->argv[i]);
-  // }
-  // i++;
-  // printf("argv[%d] = %d\n", i, cmd->argv[i]);
   int pid = fork();
 
   printf("PID: %d\n", pid);
@@ -220,8 +213,8 @@ static void Exec(commandT* cmd, bool forceFork)
     printf("status: %d\n", WEXITSTATUS(status));
   } else {
     printf("in child\n");
-    execv(cmd->argv[0], cmd->argv);
-    exit(2);
+    execv(cmd->name, cmd->argv);
+    exit(1);
   }
 }
 
