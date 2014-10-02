@@ -99,8 +99,8 @@ static void sig(int signo)
 {
   if(signo == SIGINT) {
     printf("SIGINT\n");
-  } else if (signo == SIGTSTOP) {
-    printf("SIGSTOP\n");
+  } else if (signo == SIGTSTP) {
+    printf("SIGTSTP\n");
   } else {
     printf("Other SIG: %d\n", signo);
   }
