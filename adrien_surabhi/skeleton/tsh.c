@@ -32,6 +32,7 @@
 
 /************System include***********************************************/
 #include <stdlib.h>
+#include <stdio.h>
 #include <signal.h>
 #include <string.h>
 
@@ -96,5 +97,12 @@ int main (int argc, char *argv[])
 
 static void sig(int signo)
 {
+  if(signo == SIGINT) {
+    printf("SIGINT\n");
+  } else if (signo == SIGTSTOP) {
+    printf("SIGSTOP\n");
+  } else {
+    printf("Other SIG: %d\n", signo);
+  }
 }
 
