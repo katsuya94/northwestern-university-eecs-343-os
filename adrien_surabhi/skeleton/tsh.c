@@ -69,6 +69,7 @@ int main (int argc, char *argv[])
   /* shell initialization */
   if (signal(SIGINT, sig) == SIG_ERR) PrintPError("SIGINT");
   if (signal(SIGTSTP, sig) == SIG_ERR) PrintPError("SIGTSTP");
+  if (signal(SIGCHLD, sig) == SIG_ERR) PrintPError("SIGCHLD");
 
   while (!forceExit) /* repeat forever */
   {
@@ -101,7 +102,9 @@ static void sig(int signo)
     printf("SIGINT\n");
   } else if (signo == SIGTSTP) {
     printf("SIGTSTP\n");
-  } 
+  } else if (signo == SIGCHLD) {
+    printf("SIGCHLD\n");
+  }
   // else if (signo == SIGQUIT)
   //   {
   //     printf("SIGQUIT - EXIT\n");

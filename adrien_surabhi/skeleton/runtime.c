@@ -118,7 +118,29 @@ void RunCmdFork(commandT* cmd, bool fork)
 
 void RunCmdBg(commandT* cmd)
 {
-  // TODO
+  int child_pid = fork();
+
+  /* The processes split here */
+
+  if(child_pid < 0) {
+    printf("bad PID?\n");
+    return;
+  }
+
+  if(child_pid !=0) {
+    printf("in parent\n");
+    printf ("parent process ID is %d\n", (int) getpid());
+    bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
+
+    // add to linked list
+    job->pid = child_pid;
+    job->next = bgjobs;
+    bgjobs = job;
+  } else {
+    printf ("child process ID is %d\n", (int) getpid()); 
+    execv(cmd->name, cmd->argv);
+    exit(2);
+  }
 }
 
 void RunCmdPipe(commandT* cmd1, commandT* cmd2)
@@ -195,23 +217,38 @@ static bool ResolveExternalCmd(commandT* cmd)
 
 static void Exec(commandT* cmd, bool forceFork)
 {
-  int child_pid = fork();
-
-  if(child_pid < 0) {
-    printf("bad PID?\n");
-    return;
-  }
-
-  if(child_pid !=0) {
-    printf("in parent\n");
-    printf ("parent process ID is %d\n", (int) getpid());
-    int status = 0;
-    waitpid(child_pid, &status, 0);
-    printf("status: %d\n", WEXITSTATUS(status));
+  if (cmd->bg) {
+    printf("Background\n");
+    RunCmdBg(cmd);
   } else {
-    printf ("child process ID is %d\n", (int) getpid()); 
-    execv(cmd->name, cmd->argv);
-    exit(2);
+    printf("Foreground\n");
+
+    int child_pid = fork();
+
+    /* The processes split here */
+
+    if(child_pid < 0) {
+      printf("bad PID?\n");
+      return;
+    }
+
+    if(child_pid !=0) {
+      printf("in parent\n");
+      printf("parent process ID is %d\n", (int) getpid());
+      int status = 0;
+      waitpid(child_pid, &status, 0);
+      printf("status: %d\n", WEXITSTATUS(status));
+      bgjobL* job = bgjobs;
+      while (job != NULL) {
+        int terminated_pid = waitpid(job->pid, NULL, WNOHANG);
+        printf("terminated_pid: %d\n", terminated_pid);
+        job = job->next;
+      }
+    } else {
+      printf ("child process ID is %d\n", (int) getpid()); 
+      execv(cmd->name, cmd->argv);
+      exit(2);
+    }
   }
 }
 
