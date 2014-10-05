@@ -131,7 +131,6 @@ void RunCmdBg(commandT* cmd)
   }
 
   if (child_pid) {
-    printf("parent process ID is %d\n", (int) getpid());
     bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
 
     // add to linked list
@@ -139,7 +138,6 @@ void RunCmdBg(commandT* cmd)
     job->next = bgjobs;
     bgjobs = job;
   } else {
-    printf ("child process ID is %d\n", (int) getpid()); 
     execv(cmd->name, cmd->argv);
     exit(2);
   }
@@ -155,6 +153,11 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
     if (!ResolveExternalCmd(cmd)) {
       printf("%s: command not found\n", cmd->argv[0]);
       fflush(stdout);
+
+      if (incoming != -1) {
+        close(incoming);
+      }
+
       return;
     }
   }
@@ -288,11 +291,8 @@ static bool ResolveExternalCmd(commandT* cmd)
 static void Exec(commandT* cmd, bool forceFork)
 {
   if (cmd->bg) {
-    printf("Background\n");
     RunCmdBg(cmd);
   } else {
-    printf("Foreground\n");
-
     int child_pid = fork();
 
     /* The processes split here */
@@ -303,13 +303,10 @@ static void Exec(commandT* cmd, bool forceFork)
     }
 
     if(child_pid !=0) {
-      printf("in parent\n");
-      printf("parent process ID is %d\n", (int) getpid());
       int status = 0;
       waitpid(child_pid, &status, 0);
-      printf("status: %d\n", WEXITSTATUS(status));
+      // printf("status: %d\n", WEXITSTATUS(status));
     } else {
-      printf ("child process ID is %d\n", (int) getpid()); 
       execv(cmd->name, cmd->argv);
       exit(2);
     }
@@ -318,12 +315,22 @@ static void Exec(commandT* cmd, bool forceFork)
 
 static bool IsBuiltIn(char* cmd)
 {
+  if (
+    strcmp(cmd, "cd") == 0
+  ) {
+    return TRUE;
+  }
   return FALSE;     
 }
 
 
 static void RunBuiltInCmd(commandT* cmd)
 {
+  if (strcmp(cmd->argv[0], "cd") == 0) {
+    if(chdir(cmd->argv[1]) == -1) {
+      printf("failed to change directory\n");
+    }
+  }
 }
 
 void CheckJobs()
@@ -336,7 +343,6 @@ void CheckJobs()
       printf("terminated_pid: %d\n", terminated_pid);
 
       // Coalesce linked list
-
       if (prev != NULL) {
         prev->next = job->next;
       } else {

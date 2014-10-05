@@ -69,7 +69,7 @@ int main (int argc, char *argv[])
   /* shell initialization */
   if (signal(SIGINT, sig) == SIG_ERR) PrintPError("SIGINT");
   if (signal(SIGTSTP, sig) == SIG_ERR) PrintPError("SIGTSTP");
-  if (signal(SIGCHLD, sig) == SIG_ERR) PrintPError("SIGCHLD");
+  // if (signal(SIGCHLD, sig) == SIG_ERR) PrintPError("SIGCHLD");
 
   while (!forceExit) /* repeat forever */
   {
@@ -82,12 +82,12 @@ int main (int argc, char *argv[])
       continue;
     }
 
+    /* checks the status of background jobs */
+    CheckJobs();
+
     /* interpret command and line
      * includes executing of commands */
     Interpret(cmdLine);
-
-    /* checks the status of background jobs */
-    CheckJobs();
   }
 
   /* shell termination */
@@ -97,14 +97,14 @@ int main (int argc, char *argv[])
 
 static void sig(int signo)
 {
-  if(signo == SIGINT) {
-    printf("SIGINT\n");
-  } else if (signo == SIGTSTP) {
-    printf("SIGTSTP\n");
-  } else if (signo == SIGCHLD) {
-    printf("SIGCHLD\n");
-  } else {
-    printf("Other SIG: %d\n", signo);
-  }
+  // if(signo == SIGINT) {
+  //   printf("SIGINT\n");
+  // } else if (signo == SIGTSTP) {
+  //   printf("SIGTSTP\n");
+  // } else if (signo == SIGCHLD) {
+  //   printf("SIGCHLD\n");
+  // } else {
+  //   printf("Other SIG: %d\n", signo);
+  // }
 }
 
