@@ -372,6 +372,7 @@ static int CheckJobTermination(bgjobL** prev, bgjobL** node) {
   int terminated_pid = waitpid((*node)->pid, NULL, WNOHANG);
   if (terminated_pid > 0) {
     printf("[%d]   Done                    %s\n", (*node)->jid, (*node)->cmdline);
+    fflush(stdout);
 
     // Coalesce linked list
     if (*prev != NULL) {
@@ -400,6 +401,7 @@ static void RunBuiltInCmd(commandT* cmd)
     while (node != NULL) {
       if (!CheckJobTermination(&prev, &node)) {
         printf("[%d]   Running                 %s\n", node->jid, node->cmdline);
+        fflush(stdout);
       }
       prev = node;
       node = node->next;
