@@ -93,12 +93,15 @@ void RunCmd(commandT** cmd, int n)
 {
   int i;
   total_task = n;
-  if(n == 1)
+  if (n == 1) {
     RunCmdFork(cmd[0], TRUE);
-  else{
-    RunCmdPipe(cmd[0], cmd[1]);
-    for(i = 0; i < n; i++)
+    ReleaseCmdT(&cmd[0]);
+  }
+  else {
+    RunCmdPipe(cmd[0], &cmd[1], n - 1, -1);
+    for (i = 0; i < n; i++) {
       ReleaseCmdT(&cmd[i]);
+    }
   }
 }
 
@@ -123,13 +126,12 @@ void RunCmdBg(commandT* cmd)
   /* The processes split here */
 
   if(child_pid < 0) {
-    printf("bad PID?\n");
+    printf("failed to fork\n");
     return;
   }
 
-  if(child_pid !=0) {
-    printf("in parent\n");
-    printf ("parent process ID is %d\n", (int) getpid());
+  if (child_pid) {
+    printf("parent process ID is %d\n", (int) getpid());
     bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
 
     // add to linked list
@@ -143,8 +145,77 @@ void RunCmdBg(commandT* cmd)
   }
 }
 
-void RunCmdPipe(commandT* cmd1, commandT* cmd2)
+void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 {
+  int builtin = FALSE;
+
+  if (IsBuiltIn(cmd->argv[0])) {
+    builtin = TRUE;
+  } else {
+    if (!ResolveExternalCmd(cmd)) {
+      printf("%s: command not found\n", cmd->argv[0]);
+      fflush(stdout);
+      return;
+    }
+  }
+
+  // Set up pipe if there are commands left to run
+  int fd[2];
+  if (n) {
+    if (pipe(fd) == -1) {
+      printf("failed to create pipe");
+    }
+  }
+
+  int child_pid = fork();
+
+  /* The processes split here */
+
+  if(child_pid < 0) {
+    printf("failed to fork\n");
+    return;
+  }
+
+  if (child_pid) {
+    waitpid(child_pid, NULL, 0);
+
+    // close incoming (if available) now that we're done reading it
+    if (incoming != -1) {
+      close(incoming);
+    }
+
+    // close the write end of fd (if available) now that we're done writing to it
+    if (n) {
+      close(fd[1]);  
+    }
+  } else {
+    // Map incoming pipe fd to STDIN (if available)
+    if (incoming != -1) {
+      if (dup2(incoming, 0) == -1) {
+        printf("failed to map pipe to STDIN\n");
+      }
+    }
+
+    // Map STDOUT to outgoing pipe fd (if available)
+    if (n) {
+      if (dup2(fd[1], 1) == -1) {
+        printf("failed to map STDOUT to pipe\n");
+      }
+    }
+
+    if (builtin) {
+      RunBuiltInCmd(cmd);
+      exit(0);
+    } else {
+      execv(cmd->name, cmd->argv);
+      exit(2);
+    }
+  }
+
+  if (n) {
+    // run the next process
+    RunCmdPipe(rest[0], &rest[1], n - 1, fd[0]); 
+  }
 }
 
 void RunCmdRedirOut(commandT* cmd, char* file)
@@ -165,7 +236,6 @@ static void RunExternalCmd(commandT* cmd, bool fork)
   else {
     printf("%s: command not found\n", cmd->argv[0]);
     fflush(stdout);
-    ReleaseCmdT(&cmd);
   }
 }
 
@@ -228,7 +298,7 @@ static void Exec(commandT* cmd, bool forceFork)
     /* The processes split here */
 
     if(child_pid < 0) {
-      printf("bad PID?\n");
+      printf("failed to fork\n");
       return;
     }
 
@@ -258,12 +328,24 @@ static void RunBuiltInCmd(commandT* cmd)
 
 void CheckJobs()
 {
+  bgjobL* prev = NULL;
   bgjobL* job = bgjobs;
   while (job != NULL) {
     int terminated_pid = waitpid(job->pid, NULL, WNOHANG);
     if (terminated_pid > 0) {
       printf("terminated_pid: %d\n", terminated_pid);
+
+      // Coalesce linked list
+
+      if (prev != NULL) {
+        prev->next = job->next;
+      } else {
+        bgjobs = job->next;
+      }
+
+      free(job);
     }
+    prev = job;
     job = job->next;
   }
 }

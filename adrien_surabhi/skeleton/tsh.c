@@ -82,13 +82,12 @@ int main (int argc, char *argv[])
       continue;
     }
 
-    /* checks the status of background jobs */
-    CheckJobs();
-
     /* interpret command and line
      * includes executing of commands */
     Interpret(cmdLine);
 
+    /* checks the status of background jobs */
+    CheckJobs();
   }
 
   /* shell termination */
