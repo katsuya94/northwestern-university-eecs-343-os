@@ -66,6 +66,8 @@
 
 typedef struct bgjob_l {
   pid_t pid;
+  int jid;
+  char* cmdline;
   struct bgjob_l* next;
 } bgjobL;
 
@@ -134,9 +136,49 @@ void RunCmdBg(commandT* cmd)
     bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
 
     // add to linked list
+
     job->pid = child_pid;
-    job->next = bgjobs;
-    bgjobs = job;
+    job->cmdline = strdup(cmd->cmdline);
+    bgjobL* node = bgjobs;
+    bgjobL* found = NULL;
+    int jid = 1;
+    int difference;
+
+    if (node != NULL && node->jid > 1) {
+      // indicate the loop should not run
+      // found = NULL indicates that it should be placed at the beginning
+      node = NULL;
+    }
+
+    // find the first unused positive integer
+    while (node != NULL) {
+      difference = 0;
+      if (node->next != NULL) {
+        difference = node->next->jid - node->jid;
+      } else {
+        // indicate that there is space
+        difference = 2;
+      }
+      if (difference > 1) {
+        // use the next open jid
+        jid = node->jid + 1;
+        found = node;
+        break;
+      }
+      node = node->next;
+    }
+
+    job->jid = jid;
+
+    if (found == NULL) {
+      // beginning of list
+      job->next = bgjobs;
+      bgjobs = job;
+    } else {
+      // after found element
+      job->next = found->next;
+      found->next = job;
+    }
   } else {
     execv(cmd->name, cmd->argv);
     exit(2);
@@ -316,13 +358,35 @@ static void Exec(commandT* cmd, bool forceFork)
 static bool IsBuiltIn(char* cmd)
 {
   if (
-    strcmp(cmd, "cd") == 0
+    strcmp(cmd, "cd") == 0 ||
+    strcmp(cmd, "jobs") == 0
   ) {
     return TRUE;
   }
   return FALSE;     
 }
 
+// Handles coalescing and freeing, returns whether a termination was caught.
+
+static int CheckJobTermination(bgjobL** prev, bgjobL** node) {
+  int terminated_pid = waitpid((*node)->pid, NULL, WNOHANG);
+  if (terminated_pid > 0) {
+    printf("[%d]   Done                    %s\n", (*node)->jid, (*node)->cmdline);
+
+    // Coalesce linked list
+    if (*prev != NULL) {
+      (*prev)->next = (*node)->next;
+    } else {
+      bgjobs = (*node)->next;
+    }
+
+    free((*node)->cmdline);
+    free(*node);
+
+    return 1;
+  }
+  return 0;
+}
 
 static void RunBuiltInCmd(commandT* cmd)
 {
@@ -330,29 +394,27 @@ static void RunBuiltInCmd(commandT* cmd)
     if(chdir(cmd->argv[1]) == -1) {
       printf("failed to change directory\n");
     }
+  } else if (strcmp(cmd->argv[0], "jobs") == 0) {
+    bgjobL* prev = NULL;
+    bgjobL* node = bgjobs;
+    while (node != NULL) {
+      if (!CheckJobTermination(&prev, &node)) {
+        printf("[%d]   Running                 %s\n", node->jid, node->cmdline);
+      }
+      prev = node;
+      node = node->next;
+    }
   }
 }
 
 void CheckJobs()
 {
   bgjobL* prev = NULL;
-  bgjobL* job = bgjobs;
-  while (job != NULL) {
-    int terminated_pid = waitpid(job->pid, NULL, WNOHANG);
-    if (terminated_pid > 0) {
-      printf("terminated_pid: %d\n", terminated_pid);
-
-      // Coalesce linked list
-      if (prev != NULL) {
-        prev->next = job->next;
-      } else {
-        bgjobs = job->next;
-      }
-
-      free(job);
-    }
-    prev = job;
-    job = job->next;
+  bgjobL* node = bgjobs;
+  while (node != NULL) {
+    CheckJobTermination(&prev, &node);
+    prev = node;
+    node = node->next;
   }
 }
 
