@@ -64,6 +64,9 @@
 
 #define NBUILTINCOMMANDS (sizeof BuiltInCommands / sizeof(char*))
 
+#define STDOUT 1 
+#define STDIN 0 
+
 typedef struct bgjob_l {
   pid_t pid;
   int jid;
@@ -265,10 +268,26 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 
 void RunCmdRedirOut(commandT* cmd, char* file)
 {
+  int out;
+  if(strcmp(cmd->name, ">") == 0)
+  {
+  out = open(cmd->name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+  dup2(out,STDOUT); 
+  close(out); 
+  execv(cmd->name, cmd->argv);
+  }
 }
 
 void RunCmdRedirIn(commandT* cmd, char* file)
 {
+    int in; 
+    if (strcmp(cmd->name, "<") == 0)
+    {
+    in = open(cmd->name,O_RDONLY); 
+    dup2(in, STDIN); 
+    close(in);
+    execv(cmd->name, cmd->argv);
+    }
 }
 
 
