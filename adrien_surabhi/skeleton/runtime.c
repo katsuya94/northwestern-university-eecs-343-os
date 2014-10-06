@@ -125,7 +125,7 @@ void RunCmdFork(commandT* cmd, bool fork)
 }
 
 // add to linked list
-static void AddJob(int child_pid, char* cmdline) {
+static bgjobL* AddJob(int child_pid, char* cmdline) {
   bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
 
   job->pid = child_pid;
@@ -170,6 +170,8 @@ static void AddJob(int child_pid, char* cmdline) {
     job->next = found->next;
     found->next = job;
   }
+
+  return job;
 }
 
 void RunCmdBg(commandT* cmd)
@@ -244,14 +246,20 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
     if (incoming != -1) {
       if (dup2(incoming, STDIN) == -1) {
         printf("failed to map pipe to STDIN\n");
+        fflush(stdout);
+        exit(2);
       }
+      close(incoming);
     }
 
     // Map STDOUT to outgoing pipe fd (if available)
     if (n) {
       if (dup2(fd[1], STDOUT) == -1) {
         printf("failed to map STDOUT to pipe\n");
+        fflush(stdout);
+        exit(2);
       }
+      close(fd[1]);
     }
 
     if (builtin) {
@@ -366,8 +374,12 @@ static void Exec(commandT* cmd, bool forceFork)
 
     if(child_pid !=0) {
       int status = 0;
-      waitpid(child_pid, &status, 0);
-      // printf("status: %d\n", WEXITSTATUS(status));
+      waitpid(child_pid, &status, WUNTRACED);
+      if (WIFSTOPPED(status)) {
+        bgjobL* job = AddJob(child_pid, cmd->cmdline);
+        printf("[%d]   Stopped                 %s\n", job->jid, job->cmdline);
+      fflush(stdout);
+      }
     } else {
       if (cmd->is_redirect_in) {
         int in = open(cmd->redirect_in, O_RDONLY);
@@ -405,7 +417,9 @@ static bool IsBuiltIn(char* cmd)
 {
   if (
     strcmp(cmd, "cd") == 0 ||
-    strcmp(cmd, "jobs") == 0
+    strcmp(cmd, "jobs") == 0 ||
+    strcmp(cmd, "fg") == 0 ||
+    strcmp(cmd, "bg") == 0
   ) {
     return TRUE;
   }
@@ -415,22 +429,24 @@ static bool IsBuiltIn(char* cmd)
 // Handles coalescing and freeing, returns whether a termination was caught.
 
 static int CheckJobTermination(bgjobL** prev, bgjobL** node) {
-  int terminated_pid = waitpid((*node)->pid, NULL, WNOHANG);
+  int status;
+  int terminated_pid = waitpid((*node)->pid, &status, WNOHANG | WUNTRACED);
   if (terminated_pid > 0) {
-    printf("[%d]   Done                    %s\n", (*node)->jid, (*node)->cmdline);
-    fflush(stdout);
+    if (WIFSTOPPED(status)) {
+      return 2;
+    } else if (WIFEXITED(status)) {
+      // Coalesce linked list
+      if (*prev != NULL) {
+        (*prev)->next = (*node)->next;
+      } else {
+        bgjobs = (*node)->next;
+      }
 
-    // Coalesce linked list
-    if (*prev != NULL) {
-      (*prev)->next = (*node)->next;
-    } else {
-      bgjobs = (*node)->next;
+      free((*node)->cmdline);
+      free(*node);
+
+      return 1;
     }
-
-    free((*node)->cmdline);
-    free(*node);
-
-    return 1;
   }
   return 0;
 }
@@ -454,10 +470,19 @@ static void RunBuiltInCmd(commandT* cmd)
     bgjobL* prev = NULL;
     bgjobL* node = bgjobs;
     while (node != NULL) {
-      if (!CheckJobTermination(&prev, &node)) {
+      int term = CheckJobTermination(&prev, &node);
+      switch (term) {
+      case 0:
         printf("[%d]   Running                 %s\n", node->jid, node->cmdline);
-        fflush(stdout);
+        break;
+      case 1:
+        printf("[%d]   Done                    %s\n", node->jid, node->cmdline);
+        break;
+      case 2:
+        printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
+        break;
       }
+
       prev = node;
       node = node->next;
     }
@@ -469,7 +494,10 @@ void CheckJobs()
   bgjobL* prev = NULL;
   bgjobL* node = bgjobs;
   while (node != NULL) {
-    CheckJobTermination(&prev, &node);
+    int term = CheckJobTermination(&prev, &node);
+    if (term == 1) {
+      printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
+    }
     prev = node;
     node = node->next;
   }
@@ -502,10 +530,10 @@ void ReleaseCmdT(commandT **cmd){
   free(*cmd);
 }
 
-void StopFgProc() {
-  printf("here\n");
-  int pid = waitpid(-1, NULL, WUNTRACED | WNOHANG);
-  printf("caught SIGTSTP for %d in %d\n", pid, getpid());
-  fflush(stdout);
-  AddJob(pid, "temp");
-}
+// void StopFgProc() {
+//   printf("here\n");
+//   int pid = waitpid(-1, NULL, WUNTRACED | WNOHANG);
+//   printf("caught SIGTSTP for %d in %d\n", pid, getpid());
+//   fflush(stdout);
+//   AddJob(pid, "temp");
+// }
