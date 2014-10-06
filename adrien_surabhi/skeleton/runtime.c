@@ -124,6 +124,54 @@ void RunCmdFork(commandT* cmd, bool fork)
   }
 }
 
+// add to linked list
+static void AddJob(int child_pid, char* cmdline) {
+  bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
+
+  job->pid = child_pid;
+  job->cmdline = strdup(cmdline);
+  bgjobL* node = bgjobs;
+  bgjobL* found = NULL;
+  int jid = 1;
+  int difference;
+
+  if (node != NULL && node->jid > 1) {
+    // indicate the loop should not run
+    // found = NULL indicates that it should be placed at the beginning
+    node = NULL;
+  }
+
+  // find the first unused positive integer
+  while (node != NULL) {
+    difference = 0;
+    if (node->next != NULL) {
+      difference = node->next->jid - node->jid;
+    } else {
+      // indicate that there is space
+      difference = 2;
+    }
+    if (difference > 1) {
+      // use the next open jid
+      jid = node->jid + 1;
+      found = node;
+      break;
+    }
+    node = node->next;
+  }
+
+  job->jid = jid;
+
+  if (found == NULL) {
+    // beginning of list
+    job->next = bgjobs;
+    bgjobs = job;
+  } else {
+    // after found element
+    job->next = found->next;
+    found->next = job;
+  }
+}
+
 void RunCmdBg(commandT* cmd)
 {
   int child_pid = fork();
@@ -136,52 +184,7 @@ void RunCmdBg(commandT* cmd)
   }
 
   if (child_pid) {
-    bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
-
-    // add to linked list
-
-    job->pid = child_pid;
-    job->cmdline = strdup(cmd->cmdline);
-    bgjobL* node = bgjobs;
-    bgjobL* found = NULL;
-    int jid = 1;
-    int difference;
-
-    if (node != NULL && node->jid > 1) {
-      // indicate the loop should not run
-      // found = NULL indicates that it should be placed at the beginning
-      node = NULL;
-    }
-
-    // find the first unused positive integer
-    while (node != NULL) {
-      difference = 0;
-      if (node->next != NULL) {
-        difference = node->next->jid - node->jid;
-      } else {
-        // indicate that there is space
-        difference = 2;
-      }
-      if (difference > 1) {
-        // use the next open jid
-        jid = node->jid + 1;
-        found = node;
-        break;
-      }
-      node = node->next;
-    }
-
-    job->jid = jid;
-
-    if (found == NULL) {
-      // beginning of list
-      job->next = bgjobs;
-      bgjobs = job;
-    } else {
-      // after found element
-      job->next = found->next;
-      found->next = job;
-    }
+    AddJob(child_pid, cmd->cmdline);
   } else {
     execv(cmd->name, cmd->argv);
     exit(2);
@@ -239,14 +242,14 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
   } else {
     // Map incoming pipe fd to STDIN (if available)
     if (incoming != -1) {
-      if (dup2(incoming, 0) == -1) {
+      if (dup2(incoming, STDIN) == -1) {
         printf("failed to map pipe to STDIN\n");
       }
     }
 
     // Map STDOUT to outgoing pipe fd (if available)
     if (n) {
-      if (dup2(fd[1], 1) == -1) {
+      if (dup2(fd[1], STDOUT) == -1) {
         printf("failed to map STDOUT to pipe\n");
       }
     }
@@ -269,24 +272,22 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 void RunCmdRedirOut(commandT* cmd, char* file)
 {
   int out;
-  if(strcmp(cmd->name, ">") == 0)
-  {
-  out = open(cmd->name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
-  dup2(out,STDOUT); 
-  close(out); 
-  execv(cmd->name, cmd->argv);
+  if(strcmp(cmd->name, ">") == 0) {
+    out = open(cmd->name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+    dup2(out,STDOUT); 
+    close(out); 
+    execv(cmd->name, cmd->argv);
   }
 }
 
 void RunCmdRedirIn(commandT* cmd, char* file)
 {
     int in; 
-    if (strcmp(cmd->name, "<") == 0)
-    {
-    in = open(cmd->name,O_RDONLY); 
-    dup2(in, STDIN); 
-    close(in);
-    execv(cmd->name, cmd->argv);
+    if (strcmp(cmd->name, "<") == 0) {
+      in = open(cmd->name, O_RDONLY); 
+      dup2(in, STDIN); 
+      close(in);
+      execv(cmd->name, cmd->argv);
     }
 }
 
@@ -368,6 +369,32 @@ static void Exec(commandT* cmd, bool forceFork)
       waitpid(child_pid, &status, 0);
       // printf("status: %d\n", WEXITSTATUS(status));
     } else {
+      if (cmd->is_redirect_in) {
+        int in = open(cmd->redirect_in, O_RDONLY);
+
+        if (in == -1) {
+          printf("failed to open %s for reading", cmd->redirect_in);
+          fflush(stdout);
+          exit(2);
+        }
+
+        dup2(in, STDIN);
+        close(in);
+      }
+
+      if (cmd->is_redirect_out) {
+        int out = open(cmd->redirect_out, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+
+        if (out == -1) {
+          printf("failed to open %s for writing", cmd->redirect_out);
+          fflush(stdout);
+          exit(2);
+        }
+
+        dup2(out, STDOUT);
+        close(out);
+      }
+
       execv(cmd->name, cmd->argv);
       exit(2);
     }
@@ -411,7 +438,15 @@ static int CheckJobTermination(bgjobL** prev, bgjobL** node) {
 static void RunBuiltInCmd(commandT* cmd)
 {
   if (strcmp(cmd->argv[0], "cd") == 0) {
-    if(chdir(cmd->argv[1]) == -1) {
+    char* path;
+
+    if (cmd->argc > 1) {
+      path = cmd->argv[1];
+    } else {
+      path = getenv("HOME");
+    }
+
+    if (chdir(path) == -1) {
       printf("failed to change directory\n");
       fflush(stdout);
     }
@@ -465,4 +500,12 @@ void ReleaseCmdT(commandT **cmd){
   for(i = 0; i < (*cmd)->argc; i++)
     if((*cmd)->argv[i] != NULL) free((*cmd)->argv[i]);
   free(*cmd);
+}
+
+void StopFgProc() {
+  printf("here\n");
+  int pid = waitpid(-1, NULL, WUNTRACED | WNOHANG);
+  printf("caught SIGTSTP for %d in %d\n", pid, getpid());
+  fflush(stdout);
+  AddJob(pid, "temp");
 }
