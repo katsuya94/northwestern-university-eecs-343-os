@@ -394,6 +394,7 @@ static void RunBuiltInCmd(commandT* cmd)
   if (strcmp(cmd->argv[0], "cd") == 0) {
     if(chdir(cmd->argv[1]) == -1) {
       printf("failed to change directory\n");
+      fflush(stdout);
     }
   } else if (strcmp(cmd->argv[0], "jobs") == 0) {
     bgjobL* prev = NULL;
