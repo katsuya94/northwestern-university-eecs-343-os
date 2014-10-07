@@ -52,6 +52,7 @@
 /************Private include**********************************************/
 #include "runtime.h"
 #include "io.h"
+#include "interpreter.h"
 
 /************Defines and Typedefs*****************************************/
 /*  #defines and typedefs should have their names in all caps.
@@ -77,6 +78,14 @@ typedef struct bgjob_l {
 
 /* the pids of the background processes */
 bgjobL *bgjobs = NULL;
+
+typedef struct alias_l {
+  char* name;
+  char* cmdline;
+  struct alias_l* next;
+} aliasL;
+
+aliasL* aliases = NULL;
 
 /************Function Prototypes******************************************/
 /* run command */
@@ -428,18 +437,33 @@ static void Exec(commandT* cmd, bool forceFork)
 
 static bool IsBuiltIn(char* cmd)
 {
+  /* Check if the command should be dispatched by alias */
+
+  aliasL* node = aliases;
+  while (node != NULL) {
+    if (strcmp(cmd, node->name) == 0) {
+      return TRUE;
+    }
+    node = node->next;
+  }
+
+  /* Check against builtin command names */
+
   if (
     strcmp(cmd, "cd") == 0 ||
     strcmp(cmd, "jobs") == 0 ||
     strcmp(cmd, "fg") == 0 ||
-    strcmp(cmd, "bg") == 0
+    strcmp(cmd, "bg") == 0 ||
+    strcmp(cmd, "alias") == 0 ||
+    strcmp(cmd, "unalias") == 0
   ) {
     return TRUE;
   }
-  return FALSE;     
+
+  return FALSE;
 }
 
-// Handles coalescing and freeing, returns whether a termination was caught.
+/* Handles coalescing if a termination is caught. */
 
 static void CheckJobTermination(bgjobL** prev, bgjobL** node)
 {
@@ -455,6 +479,8 @@ static void CheckJobTermination(bgjobL** prev, bgjobL** node)
   }
 }
 
+/* Handles freeing if the status is set to 1 (terminated). */
+
 static void CleanupJob(bgjobL* node)
 {
   if (node->status == 1) {
@@ -465,6 +491,66 @@ static void CleanupJob(bgjobL* node)
 
 static void RunBuiltInCmd(commandT* cmd)
 {
+  /* If applicable, reformat command with the aliases substituted */
+
+  aliasL* node = aliases;
+  while (node != NULL) {
+    if (strcmp(cmd->argv[0], node->name) == 0) {
+      char** argv = (char**) malloc(sizeof(char*) * cmd->argc); // store new argv for concatenating into a new command
+
+      /* populate argv with aliased replacements as long as the alias's command is trailed by a space */
+
+      int argi;
+      int aliasNext = TRUE;
+      size_t length = 0;
+
+      for (argi = 0; argi < cmd->argc; argi++) {
+        node = NULL;
+
+        if (aliasNext) {
+          node = aliases;
+          while (node != NULL) {
+            if (strcmp(cmd->argv[argi], node->name) == 0) {
+              break;
+            }
+            node = node->next;
+          }
+        }
+
+        if (node != NULL) {
+          argv[argi] = strdup(node->cmdline);
+          length += strlen(argv[argi]) + 1;
+          if (node->cmdline[strlen(node->cmdline) - 1] != ' ') {
+            aliasNext = FALSE;
+          }
+        } else {
+          argv[argi] = strdup(cmd->argv[argi]);
+          length += strlen(argv[argi]) + 1;
+          aliasNext = FALSE;
+        }
+      }
+
+      /* create new command string */
+
+      char* cmdline = (char*) malloc(sizeof(char) * length);
+      strcpy(cmdline, "");
+
+      for (argi = 0; argi < cmd->argc; argi++) {
+        strcat(cmdline, argv[argi]);
+        strcat(cmdline, " ");
+      }
+
+      /* handle as any other command */
+
+      Interpret(cmdline);
+
+      return; // return to shell
+    }
+    node = node->next;
+  }
+
+  /* Builtin commands implemented here */
+
   if (strcmp(cmd->argv[0], "cd") == 0) {
     char* path;
 
@@ -501,6 +587,77 @@ static void RunBuiltInCmd(commandT* cmd)
 
       prev = node;
       node = node->next;
+    }
+  } else if (strcmp(cmd->argv[0], "fg") == 0) {
+
+  } else if (strcmp(cmd->argv[0], "bg") == 0) {
+
+  } else if (strcmp(cmd->argv[0], "alias") == 0) {
+    if (cmd->argc == 1) {
+      /* Print Aliases */
+
+      aliasL* node = aliases;
+      while (node != NULL) {
+        printf("alias %s='%s'\n", node->name, node->cmdline);
+        node = node->next;
+      }
+    } else {
+      /* Make Alias */
+
+      size_t h = 0;
+      while (cmd->cmdline[h] != 'a') { h++; }
+
+      // assume that lias comes after 'a'
+      h += 5;
+
+      while (cmd->cmdline[h] == ' ') { h++; }
+
+      size_t i = 0;
+
+      while (cmd->cmdline[h + i] != '=') { i++; }
+
+      char* name = (char*) malloc(sizeof(char) * (i + 1));
+      strncpy(name, &(cmd->cmdline)[h], i);
+      name[i] = '\0';
+
+      while (cmd->cmdline[h + i] != '\'') { i++; }
+
+      i++;
+
+      size_t j = 0;
+
+      while (cmd->cmdline[h + i + j] != '\'') { j++; }
+
+      char* cmdline = (char*) malloc(sizeof(char) * (j + 1));
+      strncpy(cmdline, &(cmd->cmdline)[h + i], j);
+      cmdline[j] = '\0';
+
+      aliasL* alias = (aliasL*) malloc(sizeof(aliasL));
+      alias->name = name;
+      alias->cmdline = cmdline;
+      alias->next = aliases;
+      aliases = alias;
+    }
+  } else if (strcmp(cmd->argv[0], "unalias") == 0) {
+    aliasL* prev = NULL;
+    aliasL* node = aliases;
+    while (node != NULL) {
+      if (strcmp(node->name, cmd->argv[1]) == 0) {
+        if (prev != NULL) {
+          prev->next = node->next;
+        } else {
+          aliases = node->next;
+        }
+
+        free(node->name);
+        free(node->cmdline);
+        free(node);
+
+        node = NULL;
+      } else {
+        prev = node;
+        node = node->next;
+      }
     }
   }
 }

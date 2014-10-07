@@ -142,6 +142,25 @@ void Interpret(char* cmdLine)
 
   if(cmdLine[0] == '\0') return;
 
+  size_t cmdLength = strlen(cmdLine);
+
+  for (i = 0; i < cmdLength; i++) {
+    if (cmdLine[i] == '~') {
+      char* path = getenv("HOME");
+      size_t pathLength = strlen(path);
+      char* newCmdLine = (char*) malloc(sizeof(char) * (pathLength + cmdLength));
+      strcpy(newCmdLine, cmdLine);
+      strcpy(&newCmdLine[i], path);
+      strcpy(&newCmdLine[i + pathLength], &cmdLine[i + 1]);
+
+      /* try again with replacement */
+
+      cmdLine = newCmdLine;
+      i = 0;
+      cmdLength = strlen(cmdLine);
+    }
+  }
+
   for(i = 0; i < strlen(cmdLine); i++){
     if(cmdLine[i] == '\''){
       if(quotation2) continue;
