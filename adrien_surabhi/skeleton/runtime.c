@@ -87,6 +87,8 @@ typedef struct alias_l {
 
 aliasL* aliases = NULL;
 
+int fgPid = 0;
+
 /************Function Prototypes******************************************/
 /* run command */
 static void RunCmdFork(commandT*, bool);
@@ -200,12 +202,19 @@ void RunCmdBg(commandT* cmd)
   if (child_pid) {
     AddJob(child_pid, cmd->cmdline, 0);
   } else {
+    close(STDIN); // ensure that the process doesn't steal input from the shell
+
     sigset_t mask;
 
     sigemptyset(&mask);
     sigaddset(&mask, SIGTSTP);
+    sigaddset(&mask, SIGINT);
 
-    sigprocmask(SIG_BLOCK, &mask, NULL);
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
+      printf("failed to change signal mask for pid %d\n", getpid());
+      fflush(stdout);
+      exit(2);
+    }
 
     execv(cmd->name, cmd->argv);
     exit(2);
@@ -394,9 +403,15 @@ static void Exec(commandT* cmd, bool forceFork)
       return;
     }
 
-    if(child_pid !=0) {
-      int status = 0;
+    if(child_pid > 0) {
+      fgPid = child_pid;
+
+      int status;
+
       waitpid(child_pid, &status, WUNTRACED);
+
+      fgPid = 0;
+
       if (WIFSTOPPED(status)) {
         bgjobL* job = AddJob(child_pid, cmd->cmdline, 2);
         printf("[%d]   Stopped                 %s\n", job->jid, job->cmdline);
@@ -589,7 +604,45 @@ static void RunBuiltInCmd(commandT* cmd)
       node = node->next;
     }
   } else if (strcmp(cmd->argv[0], "fg") == 0) {
+    if (cmd->argc >= 2) {
+      int jid = atoi(cmd->argv[1]);
+      bgjobL* prev = NULL;
+      bgjobL* node = bgjobs;
+      while (node != NULL) {
+        if (node->jid == jid) {
+          int pid = node->pid;
+          char* cmdline = strdup(node->cmdline);
 
+          if (prev == NULL) {
+            bgjobs = node->next;
+          } else {
+            prev->next = node->next;
+          }
+
+          free(node->cmdline);
+          free(node);
+
+          kill(pid, SIGCONT);
+
+          fgPid = pid;
+
+          int status;
+          waitpid(pid, &status, WUNTRACED);
+
+          fgPid = 0;
+
+          if (WIFSTOPPED(status)) {
+            bgjobL* job = AddJob(pid, cmdline, 2);
+            printf("[%d]   Stopped                 %s\n", job->jid, job->cmdline);
+            fflush(stdout);
+          }
+
+          break;
+        }
+        prev = node;
+        node = node->next;
+      }
+    }
   } else if (strcmp(cmd->argv[0], "bg") == 0) {
 
   } else if (strcmp(cmd->argv[0], "alias") == 0) {
@@ -599,6 +652,7 @@ static void RunBuiltInCmd(commandT* cmd)
       aliasL* node = aliases;
       while (node != NULL) {
         printf("alias %s='%s'\n", node->name, node->cmdline);
+        fflush(stdout);
         node = node->next;
       }
     } else {
@@ -706,6 +760,18 @@ void ReleaseCmdT(commandT **cmd){
   for(i = 0; i < (*cmd)->argc; i++)
     if((*cmd)->argv[i] != NULL) free((*cmd)->argv[i]);
   free(*cmd);
+}
+
+void Broadcast(int signo) {
+  if (fgPid == 0) {
+    return;
+  }
+
+  int pid = waitpid(fgPid, NULL, WNOHANG);
+
+  if (pid == 0) {
+    kill(fgPid, signo);
+  }
 }
 
 // void StopFgProc() {

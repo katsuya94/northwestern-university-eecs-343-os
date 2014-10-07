@@ -96,11 +96,6 @@ int main (int argc, char *argv[])
 
 static void sig(int signo)
 {
-  // if(signo == SIGINT) {
-  //   printf("SIGINT\n");
-  // } else if (signo == SIGTSTP) {
-  //   printf("SIGTSTP\n");
-  //   StopFgProc();
-  // }
+  Broadcast(signo);
 }
 

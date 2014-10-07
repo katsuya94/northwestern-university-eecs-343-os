@@ -174,6 +174,15 @@ EXTERN char* getLogin();
  ***********************************************************************/
 EXTERN void CheckJobs();
 
+/***********************************************************************
+ *  Title: Broadcast to foreground process
+ * ---------------------------------------------------------------------
+ *    Purpose: Rebroadcast a shell signal to the foreground child.
+ *    Input: the signal number
+ *    Output: void 
+ ***********************************************************************/
+EXTERN void Broadcast(int signo);
+
 /************External Declaration*****************************************/
 
 /**************Definition***************************************************/
