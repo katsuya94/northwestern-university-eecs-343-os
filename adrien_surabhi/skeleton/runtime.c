@@ -66,17 +66,23 @@
 
 #define STDOUT 1 
 #define STDIN 0 
+#define FG 1 
+#define BG 2 
+#define ST 3
+#define MAXJOBS 16 
 
 typedef struct bgjob_l {
   pid_t pid;
   int jid;
   char* cmdline;
-  int status;
+  int status; // Running, Stopped, Done
+  int state;  //BG = 2 , FG = 1, ST=3 
   struct bgjob_l* next;
 } bgjobL;
 
 /* the pids of the background processes */
 bgjobL *bgjobs = NULL;
+struct bgjob_l bg_jobs[MAXJOBS]; /* The job list */
 
 /************Function Prototypes******************************************/
 /* run command */
@@ -175,6 +181,64 @@ static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
 
   return job;
 }
+
+// struct bgjob_l *get_jid(struct bgjob_l *jobs, int jid) 
+// {
+//     int i;
+
+//     if (jid < 1)
+//       return NULL;
+//     for (i = 0; i < MAXJOBS; i++)
+  
+//     if (jobs[i].jid == jid)
+//       return &jobs[i];
+//     return NULL;
+// }
+
+struct bgjob_l *get_pid(struct bgjob_l *jobs, int jid) 
+{
+    int i;
+
+    if (jid < 1)
+      return NULL;
+    for (i = 0; i < MAXJOBS; i++)
+    {
+    if (jobs[i].jid == jid)
+    {
+      return &jobs[i];
+    }
+}
+}
+
+
+void RunCmdBack(commandT* cmd)
+{
+  int n; 
+  int jid;
+  pid_t pid;  
+ // bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
+  struct bgjobL *job; 
+  int child_pid = fork();
+
+if((n = sscanf(cmd -> argv[1], "%d", &jid)) == 1)
+  {
+     //call a function to search the linked list and give the process id. 
+     if((job = get_pid(bg_jobs, jid)))
+     {
+        printf("job process id \n"); 
+        kill(-(child_pid), SIGCONT); 
+      }
+
+      else
+      {
+        printf("Not found\n");
+      }
+    printf("Job sent to the background \n");
+
+     }
+    //do we check for the jobs in the table?? 
+  }
+
 
 void RunCmdBg(commandT* cmd)
 {
@@ -502,6 +566,10 @@ static void RunBuiltInCmd(commandT* cmd)
       prev = node;
       node = node->next;
     }
+  }
+  else if (strcmp(cmd->argv[0], "bg") == 0)
+  {
+    RunCmdBack(cmd); 
   }
 }
 
