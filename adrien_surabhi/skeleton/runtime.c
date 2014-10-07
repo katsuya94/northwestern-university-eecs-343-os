@@ -71,6 +71,7 @@ typedef struct bgjob_l {
   pid_t pid;
   int jid;
   char* cmdline;
+  int status;
   struct bgjob_l* next;
 } bgjobL;
 
@@ -125,11 +126,12 @@ void RunCmdFork(commandT* cmd, bool fork)
 }
 
 // add to linked list
-static bgjobL* AddJob(int child_pid, char* cmdline) {
+static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
   bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
 
   job->pid = child_pid;
   job->cmdline = strdup(cmdline);
+  job->status = status;
   bgjobL* node = bgjobs;
   bgjobL* found = NULL;
   int jid = 1;
@@ -182,12 +184,20 @@ void RunCmdBg(commandT* cmd)
 
   if(child_pid < 0) {
     printf("failed to fork\n");
+    fflush(stdout);
     return;
   }
 
   if (child_pid) {
-    AddJob(child_pid, cmd->cmdline);
+    AddJob(child_pid, cmd->cmdline, 0);
   } else {
+    sigset_t mask;
+
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGTSTP);
+
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+
     execv(cmd->name, cmd->argv);
     exit(2);
   }
@@ -215,8 +225,9 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
   // Set up pipe if there are commands left to run
   int fd[2];
   if (n) {
-    if (pipe(fd) == -1) {
-      printf("failed to create pipe");
+    if (pipe(fd) < 0) {
+      printf("failed to create pipe\n");
+      fflush(stdout);
     }
   }
 
@@ -226,12 +237,11 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 
   if(child_pid < 0) {
     printf("failed to fork\n");
+    fflush(stdout);
     return;
   }
 
   if (child_pid) {
-    waitpid(child_pid, NULL, 0);
-
     // close incoming (if available) now that we're done reading it
     if (incoming != -1) {
       close(incoming);
@@ -241,10 +251,12 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
     if (n) {
       close(fd[1]);  
     }
+
+    waitpid(child_pid, NULL, 0);
   } else {
     // Map incoming pipe fd to STDIN (if available)
     if (incoming != -1) {
-      if (dup2(incoming, STDIN) == -1) {
+      if (dup2(incoming, STDIN) < 0) {
         printf("failed to map pipe to STDIN\n");
         fflush(stdout);
         exit(2);
@@ -254,7 +266,7 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 
     // Map STDOUT to outgoing pipe fd (if available)
     if (n) {
-      if (dup2(fd[1], STDOUT) == -1) {
+      if (dup2(fd[1], STDOUT) < 0) {
         printf("failed to map STDOUT to pipe\n");
         fflush(stdout);
         exit(2);
@@ -369,6 +381,7 @@ static void Exec(commandT* cmd, bool forceFork)
 
     if(child_pid < 0) {
       printf("failed to fork\n");
+      fflush(stdout);
       return;
     }
 
@@ -376,15 +389,15 @@ static void Exec(commandT* cmd, bool forceFork)
       int status = 0;
       waitpid(child_pid, &status, WUNTRACED);
       if (WIFSTOPPED(status)) {
-        bgjobL* job = AddJob(child_pid, cmd->cmdline);
+        bgjobL* job = AddJob(child_pid, cmd->cmdline, 2);
         printf("[%d]   Stopped                 %s\n", job->jid, job->cmdline);
-      fflush(stdout);
+        fflush(stdout);
       }
     } else {
       if (cmd->is_redirect_in) {
         int in = open(cmd->redirect_in, O_RDONLY);
 
-        if (in == -1) {
+        if (in < 0) {
           printf("failed to open %s for reading", cmd->redirect_in);
           fflush(stdout);
           exit(2);
@@ -397,7 +410,7 @@ static void Exec(commandT* cmd, bool forceFork)
       if (cmd->is_redirect_out) {
         int out = open(cmd->redirect_out, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
 
-        if (out == -1) {
+        if (out < 0) {
           printf("failed to open %s for writing", cmd->redirect_out);
           fflush(stdout);
           exit(2);
@@ -428,27 +441,26 @@ static bool IsBuiltIn(char* cmd)
 
 // Handles coalescing and freeing, returns whether a termination was caught.
 
-static int CheckJobTermination(bgjobL** prev, bgjobL** node) {
+static void CheckJobTermination(bgjobL** prev, bgjobL** node)
+{
   int status;
-  int terminated_pid = waitpid((*node)->pid, &status, WNOHANG | WUNTRACED);
+  int terminated_pid = waitpid((*node)->pid, &status, WNOHANG);
   if (terminated_pid > 0) {
-    if (WIFSTOPPED(status)) {
-      return 2;
-    } else if (WIFEXITED(status)) {
-      // Coalesce linked list
-      if (*prev != NULL) {
-        (*prev)->next = (*node)->next;
-      } else {
-        bgjobs = (*node)->next;
-      }
-
-      free((*node)->cmdline);
-      free(*node);
-
-      return 1;
+    if (*prev != NULL) {
+      (*prev)->next = (*node)->next;
+    } else {
+      bgjobs = (*node)->next;
     }
+    (*node)->status = 1;
   }
-  return 0;
+}
+
+static void CleanupJob(bgjobL* node)
+{
+  if (node->status == 1) {
+    free(node->cmdline);
+    free(node);
+  }
 }
 
 static void RunBuiltInCmd(commandT* cmd)
@@ -462,7 +474,7 @@ static void RunBuiltInCmd(commandT* cmd)
       path = getenv("HOME");
     }
 
-    if (chdir(path) == -1) {
+    if (chdir(path) < 0) {
       printf("failed to change directory\n");
       fflush(stdout);
     }
@@ -470,8 +482,9 @@ static void RunBuiltInCmd(commandT* cmd)
     bgjobL* prev = NULL;
     bgjobL* node = bgjobs;
     while (node != NULL) {
-      int term = CheckJobTermination(&prev, &node);
-      switch (term) {
+      CheckJobTermination(&prev, &node);
+
+      switch (node->status) {
       case 0:
         printf("[%d]   Running                 %s\n", node->jid, node->cmdline);
         break;
@@ -482,6 +495,9 @@ static void RunBuiltInCmd(commandT* cmd)
         printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
         break;
       }
+      fflush(stdout);
+
+      CleanupJob(node);
 
       prev = node;
       node = node->next;
@@ -494,10 +510,15 @@ void CheckJobs()
   bgjobL* prev = NULL;
   bgjobL* node = bgjobs;
   while (node != NULL) {
-    int term = CheckJobTermination(&prev, &node);
-    if (term == 1) {
-      printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
+    CheckJobTermination(&prev, &node);
+
+    if (node->status == 1) {
+      printf("[%d]   Done                    %s\n", node->jid, node->cmdline);
+      fflush(stdout);
     }
+
+    CleanupJob(node);
+
     prev = node;
     node = node->next;
   }
