@@ -204,43 +204,6 @@ static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
   return job;
 }
 
-void RunCmdBg(commandT* cmd)
-{
-  int child_pid = fork();
-
-  /* The processes split here */
-
-  if(child_pid < 0) {
-    printf("failed to fork\n");
-    fflush(stdout);
-    return;
-  }
-
-  if (child_pid) {
-    setpgid(child_pid, 0); // Move child into its own process group.
-    AddJob(child_pid, cmd->cmdline, 0);
-  } else {
-    setpgid(0, 0); // Move child into its own process group.
-
-    close(STDIN); // ensure that the process doesn't steal input from the shell
-
-    sigset_t mask;
-
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGTSTP);
-    sigaddset(&mask, SIGINT);
-
-    if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
-      printf("failed to change signal mask for pid %d\n", getpid());
-      fflush(stdout);
-      exit(2);
-    }
-
-    execv(cmd->name, cmd->argv);
-    exit(2);
-  }
-}
-
 void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 {
   int builtin = FALSE;
@@ -331,30 +294,8 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
   }
 }
 
-void RunCmdRedirOut(commandT* cmd, char* file)
-{
-  int out;
-  if(strcmp(cmd->name, ">") == 0) {
-    out = open(cmd->name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
-    dup2(out,STDOUT); 
-    close(out); 
-    execv(cmd->name, cmd->argv);
-  }
-}
-
-void RunCmdRedirIn(commandT* cmd, char* file)
-{
-    int in; 
-    if (strcmp(cmd->name, "<") == 0) {
-      in = open(cmd->name, O_RDONLY); 
-      dup2(in, STDIN); 
-      close(in);
-      execv(cmd->name, cmd->argv);
-    }
-}
-
-
 /*Try to run an external command*/
+
 static void RunExternalCmd(commandT* cmd, bool fork)
 {
   if (ResolveExternalCmd(cmd)){
@@ -366,7 +307,8 @@ static void RunExternalCmd(commandT* cmd, bool fork)
   }
 }
 
-/*Find the executable based on search list provided by environment variable PATH*/
+/* Find the executable based on search list provided by environment variable PATH */
+
 static bool ResolveExternalCmd(commandT* cmd)
 {
   char *pathlist, *c;
@@ -377,7 +319,7 @@ static bool ResolveExternalCmd(commandT* cmd)
   if(strchr(cmd->argv[0],'/') != NULL){
     if(stat(cmd->argv[0], &fs) >= 0){
       if(S_ISDIR(fs.st_mode) == 0)
-        if(access(cmd->argv[0],X_OK) == 0){/*Whether it's an executable or the user has required permisson to run it*/
+        if(access(cmd->argv[0],X_OK) == 0){ /* Whether it's an executable or the user has required permisson to run it */
           cmd->name = strdup(cmd->argv[0]);
           return TRUE;
         }
@@ -403,14 +345,16 @@ static bool ResolveExternalCmd(commandT* cmd)
     strcat(buf,cmd->argv[0]);
     if(stat(buf, &fs) >= 0){
       if(S_ISDIR(fs.st_mode) == 0)
-        if(access(buf,X_OK) == 0){/*Whether it's an executable or the user has required permisson to run it*/
+        if(access(buf,X_OK) == 0){ /* Whether it's an executable or the user has required permisson to run it */
           cmd->name = strdup(buf); 
           return TRUE;
         }
     }
   }
-  return FALSE; /*The command is not found or the user don't have enough priority to run.*/
+  return FALSE; /* The command is not found or the user don't have enough priority to run. */
 }
+
+/* Execute a command */
 
 static void Exec(commandT* cmd, bool forceFork)
 {
@@ -791,8 +735,10 @@ commandT* CreateCmdT(int n)
   return cd;
 }
 
-/*Release and collect the space of a commandT struct*/
-void ReleaseCmdT(commandT **cmd){
+/* Release and collect the space of a commandT struct */
+
+void ReleaseCmdT(commandT **cmd)
+{
   int i;
   if((*cmd)->name != NULL) free((*cmd)->name);
   if((*cmd)->cmdline != NULL) free((*cmd)->cmdline);
@@ -803,7 +749,8 @@ void ReleaseCmdT(commandT **cmd){
   free(*cmd);
 }
 
-void Broadcast(int signo) {
+void Broadcast(int signo)
+{
   bgjobL* node = bgjobs;
   while (node != NULL) {
     if (IS_FOREGROUND(node)) {
@@ -813,7 +760,8 @@ void Broadcast(int signo) {
   }
 }
 
-void SigChldHandler() {
+void SigChldHandler()
+{
   int status;
   bgjobL* node = bgjobs;
   while (node != NULL) {
