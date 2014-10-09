@@ -66,7 +66,15 @@
 #define NBUILTINCOMMANDS (sizeof BuiltInCommands / sizeof(char*))
 
 #define STDOUT 1 
-#define STDIN 0 
+#define STDIN 0
+
+#define IS_FOREGROUND(node) ((node)->status & 1)
+#define IS_RUNNING(node) ((node)->status & 2)
+#define IS_TERMINATED(node) ((node)->status & 4)
+
+#define FOREGROUND 1
+#define RUNNING 2
+#define TERMINATED 4
 
 typedef struct bgjob_l {
   pid_t pid;
@@ -74,6 +82,7 @@ typedef struct bgjob_l {
   char* cmdline;
   int status;
   struct bgjob_l* next;
+  struct bgjob_l* prev;
 } bgjobL;
 
 /* the pids of the background processes */
@@ -105,6 +114,7 @@ static bool IsBuiltIn(char*);
 /************External Declaration*****************************************/
 
 /**************Implementation***********************************************/
+
 int total_task;
 void RunCmd(commandT** cmd, int n)
 {
@@ -136,7 +146,8 @@ void RunCmdFork(commandT* cmd, bool fork)
   }
 }
 
-// add to linked list
+/* Add to jobs list */
+
 static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
   bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
 
@@ -150,8 +161,8 @@ static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
 
   if (node != NULL && node->jid > 1) {
     // indicate the loop should not run
-    // found = NULL indicates that it should be placed at the beginning
     node = NULL;
+    // found = NULL indicates that it should be placed at the beginning
   }
 
   // find the first unused positive integer
@@ -177,11 +188,17 @@ static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
   if (found == NULL) {
     // beginning of list
     job->next = bgjobs;
+    job->prev = NULL;
     bgjobs = job;
   } else {
     // after found element
     job->next = found->next;
+    job->prev = found;
     found->next = job;
+  }
+
+  if (job->next != NULL) {
+    job->next->prev = job;
   }
 
   return job;
@@ -200,8 +217,11 @@ void RunCmdBg(commandT* cmd)
   }
 
   if (child_pid) {
+    setpgid(child_pid, 0); // Move child into its own process group.
     AddJob(child_pid, cmd->cmdline, 0);
   } else {
+    setpgid(0, 0); // Move child into its own process group.
+
     close(STDIN); // ensure that the process doesn't steal input from the shell
 
     sigset_t mask;
@@ -260,6 +280,8 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
   }
 
   if (child_pid) {
+    setpgid(child_pid, 0); // Move child into its own process group.
+
     // close incoming (if available) now that we're done reading it
     if (incoming != -1) {
       close(incoming);
@@ -272,6 +294,8 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 
     waitpid(child_pid, NULL, 0);
   } else {
+    setpgid(0, 0); // Move child into its own process group.
+
     // Map incoming pipe fd to STDIN (if available)
     if (incoming != -1) {
       if (dup2(incoming, STDIN) < 0) {
@@ -390,63 +414,90 @@ static bool ResolveExternalCmd(commandT* cmd)
 
 static void Exec(commandT* cmd, bool forceFork)
 {
-  if (cmd->bg) {
-    RunCmdBg(cmd);
-  } else {
-    int child_pid = fork();
+  sigset_t mask;
 
-    /* The processes split here */
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGCHLD);
+  sigaddset(&mask, SIGTSTP);
+  sigaddset(&mask, SIGINT);
 
-    if(child_pid < 0) {
-      printf("failed to fork\n");
+  if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
+    printf("tsh: failed to change tsh signal mask");
+    fflush(stdout);
+    return;
+  }
+
+  int child_pid = fork();
+
+  /* The processes split here */
+
+  if(child_pid < 0) {
+    printf("failed to fork\n");
+    fflush(stdout);
+    return;
+  }
+
+  if(child_pid > 0) {
+    setpgid(child_pid, 0); // Move child into its own process group.
+
+    int status;
+
+    if (cmd->bg) {
+      status = RUNNING;
+    } else {  
+      status = FOREGROUND | RUNNING;
+    }
+
+    bgjobL* job = AddJob(child_pid, cmd->cmdline, status);
+
+    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0) {
+      printf("tsh: failed to change tsh signal mask");
       fflush(stdout);
       return;
     }
 
-    if(child_pid > 0) {
-      fgPid = child_pid;
-
-      int status;
-
-      waitpid(child_pid, &status, WUNTRACED);
-
-      fgPid = 0;
-
-      if (WIFSTOPPED(status)) {
-        bgjobL* job = AddJob(child_pid, cmd->cmdline, 2);
-        printf("[%d]   Stopped                 %s\n", job->jid, job->cmdline);
-        fflush(stdout);
+    if (!cmd->bg) {
+      while (IS_RUNNING(job)) {
+        sleep(1);
       }
-    } else {
-      if (cmd->is_redirect_in) {
-        int in = open(cmd->redirect_in, O_RDONLY);
+    }
+  } else {
+    setpgid(0, 0); // Move child into its own process group.
 
-        if (in < 0) {
-          printf("failed to open %s for reading", cmd->redirect_in);
-          fflush(stdout);
-          exit(2);
-        }
-
-        dup2(in, STDIN);
-        close(in);
-      }
-
-      if (cmd->is_redirect_out) {
-        int out = open(cmd->redirect_out, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
-
-        if (out < 0) {
-          printf("failed to open %s for writing", cmd->redirect_out);
-          fflush(stdout);
-          exit(2);
-        }
-
-        dup2(out, STDOUT);
-        close(out);
-      }
-
-      execv(cmd->name, cmd->argv);
+    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0) {
+      printf("tsh: failed to change child signal mask");
+      fflush(stdout);
       exit(2);
     }
+
+    if (cmd->is_redirect_in) {
+      int in = open(cmd->redirect_in, O_RDONLY);
+
+      if (in < 0) {
+        printf("failed to open %s for reading", cmd->redirect_in);
+        fflush(stdout);
+        exit(2);
+      }
+
+      dup2(in, STDIN);
+      close(in);
+    }
+
+    if (cmd->is_redirect_out) {
+      int out = open(cmd->redirect_out, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+
+      if (out < 0) {
+        printf("failed to open %s for writing", cmd->redirect_out);
+        fflush(stdout);
+        exit(2);
+      }
+
+      dup2(out, STDOUT);
+      close(out);
+    }
+
+    execv(cmd->name, cmd->argv);
+    exit(2);
   }
 }
 
@@ -478,29 +529,59 @@ static bool IsBuiltIn(char* cmd)
   return FALSE;
 }
 
-/* Handles coalescing if a termination is caught. */
+/* Handles freeing if the status is set to 1 (terminated). */
 
-static void CheckJobTermination(bgjobL** prev, bgjobL** node)
+static void CleanupJob(bgjobL** node, int force)
 {
-  int status;
-  int terminated_pid = waitpid((*node)->pid, &status, WNOHANG);
-  if (terminated_pid > 0) {
-    if (*prev != NULL) {
-      (*prev)->next = (*node)->next;
-    } else {
+  if (IS_TERMINATED(*node) || force) {
+    if ((*node)->prev == NULL) {
       bgjobs = (*node)->next;
+      if (bgjobs != NULL) {
+        bgjobs->prev = NULL;
+      }
+    } else {
+      (*node)->prev->next = (*node)->next;
     }
-    (*node)->status = 1;
+
+    if ((*node)->next != NULL) {
+      (*node)->next->prev = (*node)->prev;
+    }
+
+    bgjobL* old = *node;
+
+    *node = (*node)->prev;
+
+    free(old->cmdline);
+    free(old);
   }
 }
 
-/* Handles freeing if the status is set to 1 (terminated). */
+static void ContinueCmd(char** argv, int argc, int wait) {
+  if (argc >= 2) {
+    int jid = atoi(argv[1]);
 
-static void CleanupJob(bgjobL* node)
-{
-  if (node->status == 1) {
-    free(node->cmdline);
-    free(node);
+    bgjobL* node = bgjobs;
+    while (node != NULL) {
+      if (node->jid == jid) {
+        if (wait) {
+          node->status |= FOREGROUND;
+        } else {
+          node->status &= ~FOREGROUND;
+        }
+        node->status |= RUNNING;
+
+        kill(node->pid, SIGCONT);
+
+        if (wait) {
+          while (IS_RUNNING(node)) {
+            sleep(1);
+          }
+        }
+
+        break;
+      }
+      node = node->next;
+    }
   }
 }
 
@@ -580,71 +661,31 @@ static void RunBuiltInCmd(commandT* cmd)
       fflush(stdout);
     }
   } else if (strcmp(cmd->argv[0], "jobs") == 0) {
-    bgjobL* prev = NULL;
     bgjobL* node = bgjobs;
     while (node != NULL) {
-      CheckJobTermination(&prev, &node);
-
-      switch (node->status) {
-      case 0:
-        printf("[%d]   Running                 %s\n", node->jid, node->cmdline);
-        break;
-      case 1:
+      if (IS_TERMINATED(node)) {
         printf("[%d]   Done                    %s\n", node->jid, node->cmdline);
-        break;
-      case 2:
-        printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
-        break;
+      } else {
+        if (IS_RUNNING(node)) {
+          printf("[%d]   Running                 %s&\n", node->jid, node->cmdline);
+        } else {
+          printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
+        }
       }
       fflush(stdout);
 
-      CleanupJob(node);
+      CleanupJob(&node, FALSE);
 
-      prev = node;
-      node = node->next;
-    }
-  } else if (strcmp(cmd->argv[0], "fg") == 0) {
-    if (cmd->argc >= 2) {
-      int jid = atoi(cmd->argv[1]);
-      bgjobL* prev = NULL;
-      bgjobL* node = bgjobs;
-      while (node != NULL) {
-        if (node->jid == jid) {
-          int pid = node->pid;
-          char* cmdline = strdup(node->cmdline);
-
-          if (prev == NULL) {
-            bgjobs = node->next;
-          } else {
-            prev->next = node->next;
-          }
-
-          free(node->cmdline);
-          free(node);
-
-          kill(pid, SIGCONT);
-
-          fgPid = pid;
-
-          int status;
-          waitpid(pid, &status, WUNTRACED);
-
-          fgPid = 0;
-
-          if (WIFSTOPPED(status)) {
-            bgjobL* job = AddJob(pid, cmdline, 2);
-            printf("[%d]   Stopped                 %s\n", job->jid, job->cmdline);
-            fflush(stdout);
-          }
-
-          break;
-        }
-        prev = node;
+      if (node == NULL) {
+        node = bgjobs;
+      } else {
         node = node->next;
       }
     }
+  } else if (strcmp(cmd->argv[0], "fg") == 0) {
+    ContinueCmd(cmd->argv, cmd->argc, TRUE);
   } else if (strcmp(cmd->argv[0], "bg") == 0) {
-
+    ContinueCmd(cmd->argv, cmd->argc, FALSE);
   } else if (strcmp(cmd->argv[0], "alias") == 0) {
     if (cmd->argc == 1) {
       /* Print Aliases */
@@ -718,20 +759,20 @@ static void RunBuiltInCmd(commandT* cmd)
 
 void CheckJobs()
 {
-  bgjobL* prev = NULL;
   bgjobL* node = bgjobs;
   while (node != NULL) {
-    CheckJobTermination(&prev, &node);
-
-    if (node->status == 1) {
+    if (IS_TERMINATED(node) && !IS_FOREGROUND(node)) {
       printf("[%d]   Done                    %s\n", node->jid, node->cmdline);
       fflush(stdout);
     }
 
-    CleanupJob(node);
+    CleanupJob(&node, FALSE);
 
-    prev = node;
-    node = node->next;
+    if (node == NULL) {
+      node = bgjobs;
+    } else {
+      node = node->next;
+    }
   }
 }
 
@@ -763,21 +804,31 @@ void ReleaseCmdT(commandT **cmd){
 }
 
 void Broadcast(int signo) {
-  if (fgPid == 0) {
-    return;
-  }
-
-  int pid = waitpid(fgPid, NULL, WNOHANG);
-
-  if (pid == 0) {
-    kill(fgPid, signo);
+  bgjobL* node = bgjobs;
+  while (node != NULL) {
+    if (IS_FOREGROUND(node)) {
+      kill(node->pid, signo);
+    }
+    node = node->next;
   }
 }
 
-// void StopFgProc() {
-//   printf("here\n");
-//   int pid = waitpid(-1, NULL, WUNTRACED | WNOHANG);
-//   printf("caught SIGTSTP for %d in %d\n", pid, getpid());
-//   fflush(stdout);
-//   AddJob(pid, "temp");
-// }
+void SigChldHandler() {
+  int status;
+  bgjobL* node = bgjobs;
+  while (node != NULL) {
+    int pid = waitpid(node->pid, &status, WNOHANG | WUNTRACED);
+
+    if (pid > 0) {
+      if (WIFEXITED(status) || WIFSIGNALED(status)) {
+        node->status &= ~RUNNING;
+        node->status |= TERMINATED;
+      } else if (WIFSTOPPED(status)) {
+        node->status &= ~RUNNING;
+        printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
+      }
+    }
+
+    node = node->next;
+  }
+}

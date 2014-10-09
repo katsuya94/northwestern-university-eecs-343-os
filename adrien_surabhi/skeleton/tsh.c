@@ -56,6 +56,7 @@
 /************Function Prototypes******************************************/
 /* handles SIGINT and SIGSTOP signals */	
 static void sig(int);
+static void sig_chld(int);
 
 /************External Declaration*****************************************/
 
@@ -69,6 +70,7 @@ int main (int argc, char *argv[])
   /* shell initialization */
   if (signal(SIGINT, sig) == SIG_ERR) PrintPError("SIGINT");
   if (signal(SIGTSTP, sig) == SIG_ERR) PrintPError("SIGTSTP");
+  if (signal(SIGCHLD, sig_chld) == SIG_ERR) PrintPError("SIGCHLD");
 
   while (!forceExit) /* repeat forever */
   {
@@ -97,5 +99,10 @@ int main (int argc, char *argv[])
 static void sig(int signo)
 {
   Broadcast(signo);
+}
+
+static void sig_chld(int signo)
+{
+  SigChldHandler();
 }
 
