@@ -1,0 +1,57 @@
+.\" Process this file with
+.\" groff -man -Tascii tsh.1
+.\"
+.TH TSH 1 "Project-1" "Fall-2014" "EECS 343 - Project 1 - Fall 2014" 
+.SH NAME
+tsh \- A tiny shell
+.SH SYNOPSIS
+.B tsh
+.SH DESCRIPTION
+.B tsh
+This is a simple implementation of the command line shell interpreter. A number of built-in commands were implemented - fg, bg, jobs, quit. If the commands are built in commands the shell handles it immediately and waits for the next command. The other commands such as ls and cd were implemented using the PATH enviroment variable. The shell allows you to handle all the terminated jobs, stopped jobs and reaps all the zombie children. 
+.SH BUILT-IN COMMANDS
+.IP bg [job id]
+Sends the foreground job to the background and returns to the shell so that the user can issue further commands.
+.IP fg [job id]
+Returns the background job to the foreground and takes the job number as an optinal arguement.  
+.IP jobs
+Lists all the jobs in the job table. 
+.IP exit
+Exits/Quits the tiny shell 
+.IP cd [directory]
+Allows you to change directories from the current working directory.   
+.IP ls 
+ls lists the files and folders in the current working directory. 
+.IP alias [new_string] = 'tiny shell command'
+Allows a string to be used in place of the command.
+.IP unalias [new_string]
+Removes the alias for any command.  
+.SH DESIGN APPROACH
+The shell interacts with the users by waiting for the command line once the execution is done. The command line arguments consists of either 0 or 1 arguments and can be separated by an & to run background jobs. 
+
+bg, fg, jobs, exit were the built in commands that needed to be implemented.   
+RunBuiltInCmd() checks whether the command is built in or not and and calls the respective functions.
+
+Implementation of the fg and bg commands: This was done in the ContinueCmd() function. The status field of the node data structure was used to keep track of whether the job was running in the foreground or the background. Depending on the status the SIGCONT signal was passed in order to continue execution. 
+ 
+Implementation of Jobs: The jobs data structure consisted of the following data – pid, jid, cmdline, status, next pointer and prev pointer.  The Addjobs() function adds the jobs to the linked list. It assigns the next available jid (job id) to the new job on the list. When the jobs are terminated, it is removed from the linked list in the CleanupJob() function and the memory is freed.  When the user types in the job command, the shell searches for, terminated and running jobs and prints. 
+
+cd was implemented  by calling the getenv() which searches the environment for the variable and returns a pointer to value of the environment variable. Our implementation searches for the variable $HOME. 
+
+Child Processes: Since the shell spends time waiting for the commands  that it executes in the foreground process there are chances of many zombie processes to be generated. The zombie processes were reaped in the signal handler for the SIGCHILD signal.  
+
+SIGINT and SIGSTOP were handled in the Broadcast() signal handler. It uses the kill() system call to terminate the process with a specific pid. 
+
+EXTRA CREDIT: All the extra credit  questions were implemented. 
+
+I/O Redirection: This was implemented using the dup2() system call that duplicates the old file descriptor and deletes the old one, thus directing the output into the specified file. 
+
+Pipes: Pipes is an Inter Process Communication Mechanism. First, The parent and the child processes are put into different process groups. Using the dup2() system call, we implemented the half duplex pipe by reading from the standard input or writing to the standard output. 
+
+Alias and Unalias: These commands were implemented using the a data structure, alias_L that stores the new name of the command and the old name. When the user types in alias command, it replaces the new command name with the old one and vice versa when unalias command is typed .
+
+.SH AUTHOR
+Adrien Tateno - 
+adrientateno2016@u.northwestern.edu, 
+Surabhi Ravishankar - 
+surabhiravishankar2016@u.northwestern.edu 
