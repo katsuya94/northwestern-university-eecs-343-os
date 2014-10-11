@@ -10,46 +10,64 @@ tsh \- A tiny shell
 .B tsh
 This is a simple implementation of the command line shell interpreter. A number of built-in commands were implemented - fg, bg, jobs, quit. If the commands are built in commands the shell handles it immediately and waits for the next command. The other commands such as ls and cd were implemented using the PATH enviroment variable. The shell allows you to handle all the terminated jobs, stopped jobs and reaps all the zombie children. 
 .SH BUILT-IN COMMANDS
-.IP bg [job id]
-Sends the foreground job to the background and returns to the shell so that the user can issue further commands.
-.IP fg [job id]
-Returns the background job to the foreground and takes the job number as an optinal arguement.  
+.IP
+.IP bg [job_id]
+Executes a stopped job in the background and does not wait for completion (takes id of job as an argument)
+.IP fg [job_id]
+Returns a background job to the foreground and waits for completion (takes id of job as an argument)  
 .IP jobs
-Lists all the jobs in the job table. 
+Lists all background jobs and their ids, running, stopped, or recently terminated
 .IP exit
-Exits/Quits the tiny shell 
+Exits tsh
 .IP cd [directory]
-Allows you to change directories from the current working directory.   
-.IP ls 
-ls lists the files and folders in the current working directory. 
-.IP alias [new_string] = 'tiny shell command'
-Allows a string to be used in place of the command.
-.IP unalias [new_string]
-Removes the alias for any command.  
+Allows the user to change directories from the current working directory
+.IP alias [aliasname]='tsh command'
+Allows an alias to be used in place of the command
+.IP unalias [aliasname]
+Removes the alias for an aliased command
 .SH DESIGN APPROACH
-The shell interacts with the users by waiting for the command line once the execution is done. The command line arguments consists of either 0 or 1 arguments and can be separated by an & to run background jobs. 
-
-bg, fg, jobs, exit were the built in commands that needed to be implemented.   
-RunBuiltInCmd() checks whether the command is built in or not and and calls the respective functions.
-
-Implementation of the fg and bg commands: This was done in the ContinueCmd() function. The status field of the node data structure was used to keep track of whether the job was running in the foreground or the background. Depending on the status the SIGCONT signal was passed in order to continue execution. 
- 
-Implementation of Jobs: The jobs data structure consisted of the following data – pid, jid, cmdline, status, next pointer and prev pointer.  The Addjobs() function adds the jobs to the linked list. It assigns the next available jid (job id) to the new job on the list. When the jobs are terminated, it is removed from the linked list in the CleanupJob() function and the memory is freed.  When the user types in the job command, the shell searches for, terminated and running jobs and prints. 
-
-cd was implemented  by calling the getenv() which searches the environment for the variable and returns a pointer to value of the environment variable. Our implementation searches for the variable $HOME. 
-
-Child Processes: Since the shell spends time waiting for the commands  that it executes in the foreground process there are chances of many zombie processes to be generated. The zombie processes were reaped in the signal handler for the SIGCHILD signal.  
-
-SIGINT and SIGSTOP were handled in the Broadcast() signal handler. It uses the kill() system call to terminate the process with a specific pid. 
-
-EXTRA CREDIT: All the extra credit  questions were implemented. 
-
-I/O Redirection: This was implemented using the dup2() system call that duplicates the old file descriptor and deletes the old one, thus directing the output into the specified file. 
-
-Pipes: Pipes is an Inter Process Communication Mechanism. First, The parent and the child processes are put into different process groups. Using the dup2() system call, we implemented the half duplex pipe by reading from the standard input or writing to the standard output. 
-
-Alias and Unalias: These commands were implemented using the a data structure, alias_L that stores the new name of the command and the old name. When the user types in alias command, it replaces the new command name with the old one and vice versa when unalias command is typed .
-
+.LP A shell exists to control the execution of programs. To facilitate this we have implemented the following:
+.IP \[bu] 2
+Blocking execution
+.IP \[bu]
+Stopping the execution of a foreground process
+.IP \[bu]
+Terminating the execution of foreground process
+.IP \[bu]
+Non-blocking execution
+.IP \[bu]
+Switching between nonblocking and blocking execution patterns
+.IP \[bu]
+Job listing
+.IP \[bu]
+Directory changing
+.IP \[bu]
+Aliasing of commands
+.IP \[bu]
+Piped execution of processes
+.IP \[bu]
+Redirection of input to come from a file
+.IP \[bu]
+Redirection of output to go to a file
+.LP The following are design decisions and their motivations:
+.IP "The implmentation of fg and bg are handled by a single function." 0.4i
+Don't repeat yourself.
+.IP "The implementation of piping and other kinds of execution are in two separate functions."
+The recursive model of piping doesn't mesh well with Execs way of running a single command.
+.IP "Implementation of piping as a recursive function."
+Allows simple passing of file descriptors. Mimics logical behavior.
+.IP "Blocking execution waits for a job flag to change rather than calling waitpid."
+Modularity, use the jobs list as an interface.
+.IP "All wait system calls are non-blocking and are done in SigChldHandler."
+Modularity, use the jobs list as an interface.
+.IP "Substitution of tilde (~) for $HOME is done in Interpret."
+Simplest implementation, didn't require changing anything else.
+.IP "Implementation of the jobs list as a bidirectionally linked list."
+Easy coalescing. No bounded size.
+.IP "Putting every child process in its own process group."
+Ensure that signals must be explicitly routed by the shell.
+.IP "Broadcast signal only to the foreground process."
+Ensure that background processes are not inadvertently terminated.
 .SH AUTHOR
 Adrien Tateno - 
 adrientateno2016@u.northwestern.edu, 

@@ -115,6 +115,33 @@ static bool IsBuiltIn(char*);
 
 /**************Implementation***********************************************/
 
+/* Handles freeing if the status is set to 1 (terminated). */
+
+static void CleanupJob(bgjobL** node, int force)
+{
+  if (IS_TERMINATED(*node) || force) {
+    if ((*node)->prev == NULL) {
+      bgjobs = (*node)->next;
+      if (bgjobs != NULL) {
+        bgjobs->prev = NULL;
+      }
+    } else {
+      (*node)->prev->next = (*node)->next;
+    }
+
+    if ((*node)->next != NULL) {
+      (*node)->next->prev = (*node)->prev;
+    }
+
+    bgjobL* old = *node;
+
+    *node = (*node)->prev;
+
+    free(old->cmdline);
+    free(old);
+  }
+}
+
 int total_task;
 void RunCmd(commandT** cmd, int n)
 {
@@ -146,7 +173,7 @@ void RunCmdFork(commandT* cmd, bool fork)
   }
 }
 
-/* Add to jobs list */
+/* Insert into jobs list in order of jid using lowest available jid (starting with 1) */
 
 static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
   bgjobL* job = (bgjobL*) malloc(sizeof(bgjobL));
@@ -204,8 +231,15 @@ static bgjobL* AddJob(int child_pid, char* cmdline, int status) {
   return job;
 }
 
+/* Recursively run piped commands */
+
 void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
 {
+  // cmd = current command to be run
+  // rest = remaining commands to be run
+  // n = length of rest
+  // incoming = incoming "STDIN" fd
+
   int builtin = FALSE;
 
   if (IsBuiltIn(cmd->argv[0])) {
@@ -232,6 +266,20 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
     }
   }
 
+  sigset_t mask;
+  sigset_t old;
+
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGCHLD);
+  sigaddset(&mask, SIGTSTP);
+  sigaddset(&mask, SIGINT);
+
+  if (sigprocmask(SIG_BLOCK, &mask, &old) < 0) {
+    printf("tsh: failed to change tsh signal mask");
+    fflush(stdout);
+    return;
+  }
+
   int child_pid = fork();
 
   /* The processes split here */
@@ -245,6 +293,14 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
   if (child_pid) {
     setpgid(child_pid, 0); // Move child into its own process group.
 
+    bgjobL* job = AddJob(child_pid, cmd->cmdline, FOREGROUND | RUNNING);
+
+    if (sigprocmask(SIG_SETMASK, &old, NULL) < 0) {
+      printf("tsh: failed to change tsh signal mask");
+      fflush(stdout);
+      return;
+    }
+
     // close incoming (if available) now that we're done reading it
     if (incoming != -1) {
       close(incoming);
@@ -255,9 +311,19 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
       close(fd[1]);  
     }
 
-    waitpid(child_pid, NULL, 0);
+    while (IS_RUNNING(job)) {
+      sleep(1);
+    }
+
+    CleanupJob(&job, TRUE);
   } else {
     setpgid(0, 0); // Move child into its own process group.
+
+    if (sigprocmask(SIG_SETMASK, &old, NULL) < 0) {
+      printf("tsh: failed to change child signal mask");
+      fflush(stdout);
+      exit(2);
+    }
 
     // Map incoming pipe fd to STDIN (if available)
     if (incoming != -1) {
@@ -289,7 +355,7 @@ void RunCmdPipe(commandT* cmd, commandT** rest, int n, int incoming)
   }
 
   if (n) {
-    // run the next process
+    // pipe into the next process
     RunCmdPipe(rest[0], &rest[1], n - 1, fd[0]); 
   }
 }
@@ -359,13 +425,14 @@ static bool ResolveExternalCmd(commandT* cmd)
 static void Exec(commandT* cmd, bool forceFork)
 {
   sigset_t mask;
+  sigset_t old;
 
   sigemptyset(&mask);
   sigaddset(&mask, SIGCHLD);
   sigaddset(&mask, SIGTSTP);
   sigaddset(&mask, SIGINT);
 
-  if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
+  if (sigprocmask(SIG_BLOCK, &mask, &old) < 0) {
     printf("tsh: failed to change tsh signal mask");
     fflush(stdout);
     return;
@@ -394,7 +461,7 @@ static void Exec(commandT* cmd, bool forceFork)
 
     bgjobL* job = AddJob(child_pid, cmd->cmdline, status);
 
-    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0) {
+    if (sigprocmask(SIG_SETMASK, &old, NULL) < 0) {
       printf("tsh: failed to change tsh signal mask");
       fflush(stdout);
       return;
@@ -408,7 +475,7 @@ static void Exec(commandT* cmd, bool forceFork)
   } else {
     setpgid(0, 0); // Move child into its own process group.
 
-    if (sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0) {
+    if (sigprocmask(SIG_SETMASK, &old, NULL) < 0) {
       printf("tsh: failed to change child signal mask");
       fflush(stdout);
       exit(2);
@@ -471,33 +538,6 @@ static bool IsBuiltIn(char* cmd)
   }
 
   return FALSE;
-}
-
-/* Handles freeing if the status is set to 1 (terminated). */
-
-static void CleanupJob(bgjobL** node, int force)
-{
-  if (IS_TERMINATED(*node) || force) {
-    if ((*node)->prev == NULL) {
-      bgjobs = (*node)->next;
-      if (bgjobs != NULL) {
-        bgjobs->prev = NULL;
-      }
-    } else {
-      (*node)->prev->next = (*node)->next;
-    }
-
-    if ((*node)->next != NULL) {
-      (*node)->next->prev = (*node)->prev;
-    }
-
-    bgjobL* old = *node;
-
-    *node = (*node)->prev;
-
-    free(old->cmdline);
-    free(old);
-  }
 }
 
 static void ContinueCmd(char** argv, int argc, int wait) {
@@ -611,7 +651,7 @@ static void RunBuiltInCmd(commandT* cmd)
         printf("[%d]   Done                    %s\n", node->jid, node->cmdline);
       } else {
         if (IS_RUNNING(node)) {
-          printf("[%d]   Running                 %s&\n", node->jid, node->cmdline);
+          printf("[%d]   Running                 %s &\n", node->jid, node->cmdline);
         } else {
           printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
         }
@@ -671,11 +711,44 @@ static void RunBuiltInCmd(commandT* cmd)
       strncpy(cmdline, &(cmd->cmdline)[h + i], j);
       cmdline[j] = '\0';
 
-      aliasL* alias = (aliasL*) malloc(sizeof(aliasL));
-      alias->name = name;
-      alias->cmdline = cmdline;
-      alias->next = aliases;
-      aliases = alias;
+      /* find the sorted place for the alias */
+
+      aliasL* found = NULL;
+      aliasL* prev = NULL;
+      aliasL* node = aliases;
+
+      while (node != NULL && found == NULL) {
+        int cmp = strcmp(name, node->name);
+        if (cmp == 0) {
+          found = node;
+          break;
+        } else if (cmp < 0) {
+          found = (aliasL*) malloc(sizeof(aliasL));
+          if (prev != NULL) {
+            prev->next = found;
+          } else {
+            aliases = found;
+          }
+          found->next = node;
+          break;
+        }
+        prev = node;
+        node = node->next;
+      }
+
+      if (found == NULL) {
+        found = (aliasL*) malloc(sizeof(aliasL));
+        if (prev != NULL) {
+          prev->next = found;
+        } else {
+          aliases = found;
+        }
+        found->next = NULL;
+      }
+
+      found->name = name;
+      found->cmdline = cmdline;
+
     }
   } else if (strcmp(cmd->argv[0], "unalias") == 0) {
     aliasL* prev = NULL;
@@ -773,7 +846,7 @@ void SigChldHandler()
         node->status |= TERMINATED;
       } else if (WIFSTOPPED(status)) {
         node->status &= ~RUNNING;
-        printf("[%d]   Stopped                 %s\n", node->jid, node->cmdline);
+        printf("\n[%d]   Stopped                 %s\n", node->jid, node->cmdline);
       }
     }
 
