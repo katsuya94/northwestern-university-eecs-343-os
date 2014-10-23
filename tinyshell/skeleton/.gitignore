@@ -1,7 +1,0 @@
-*.o
-tsh
-.DS_Store
-*.tar.gz
-tinyshell/skeleton/testsuite/myspin
-tinyshell/skeleton/testsuite/mysplit
-tinyshell/skeleton/testsuite/mystop
