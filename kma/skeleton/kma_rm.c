@@ -186,6 +186,8 @@ kma_malloc(kma_size_t size)
 
   void* node = CONTROL_BLOCK_FIRST_NODE(root_page->ptr);
 
+  /* If the request is too small, allocate more */
+
   if (size < FREE_HEADER_SIZE - ALLOC_HEADER_SIZE) {
     size = FREE_HEADER_SIZE - ALLOC_HEADER_SIZE;
   }
@@ -199,9 +201,17 @@ kma_malloc(kma_size_t size)
     node = NEXT(node);
   }
 
+  /* If no node was found, allocate a new page */
+
   if (node == NULL) {
     kma_page_t* page = get_page();
+
+    /* At the beginning of the page, store a pointer to the page struct */
     *((kma_page_t**) page->ptr) = page;
+
+    /* Create a new free block after the page struct pointer spanning the
+       rest of the page */
+    
     node = (void*) page->ptr + CONTROL_BLOCK_SIZE;
     add_and_insert_free_header(node, page->size - CONTROL_BLOCK_SIZE - ALLOC_HEADER_SIZE);
   }
