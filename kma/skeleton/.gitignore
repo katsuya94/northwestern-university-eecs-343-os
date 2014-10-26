@@ -1,0 +1,16 @@
+kma_bud
+kma_dummy
+kma_lzbud
+kma_mck2
+kma_p2fl
+kma_rm
+kma_competition
+kma_bud.dSYM/
+kma_dummy.dSYM/
+kma_lzbud.dSYM/
+kma_mck2.dSYM/
+kma_p2fl.dSYM/
+kma_rm.dSYM/
+kma_competition.dSYM/
+*.dat
+*.png
