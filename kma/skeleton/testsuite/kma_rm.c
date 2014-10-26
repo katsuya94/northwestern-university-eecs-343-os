@@ -205,7 +205,13 @@ kma_malloc(kma_size_t size)
 
   if (node == NULL) {
     kma_page_t* page = get_page();
+
+    /* At the beginning of the page, store a pointer to the page struct */
     *((kma_page_t**) page->ptr) = page;
+
+    /* Create a new free block after the page struct pointer spanning the
+       rest of the page */
+
     node = (void*) page->ptr + CONTROL_BLOCK_SIZE;
     add_and_insert_free_header(node, page->size - CONTROL_BLOCK_SIZE - ALLOC_HEADER_SIZE);
   }
@@ -213,13 +219,18 @@ kma_malloc(kma_size_t size)
   kma_size_t target_size = SIZE(node);
   void* ptr = PAYLOAD(node);
 
+  /* If the request would leave a block that is too small, allocate the
+     whole thing */
+
   if (target_size - size < FREE_HEADER_SIZE) {
     size = target_size;
   }
 
+  /* Use target block as new allocated block */
+
   SIZE(node) = size;
 
-  /* Remove old free block */
+  /* Remove old free block from list */
 
   void* prev = PREV(node);
   void* next = NEXT(node);
@@ -233,6 +244,8 @@ kma_malloc(kma_size_t size)
   if (next != NULL) {
     PREV(next) = prev;
   }
+
+  /* If the block was split, add and insert the new free block */
 
   if (size != target_size) {
     add_and_insert_free_header(node + ALLOC_HEADER_SIZE + size,
@@ -249,30 +262,39 @@ kma_free(void* ptr, kma_size_t size)
 {
   // printf("about to free %x at %p\n", size, ptr);
 
-  assert(SIZE(HEADER(ptr)) >= size);
+  /* Simply insert a free block at the position of the
+     allocated block and coalesce */
+
   void* hdr = HEADER(ptr);
   add_and_insert_free_header(hdr, SIZE(hdr));
-
   coalesce(hdr);
 
   // dump();
 }
 
 void add_and_insert_free_header(void* target, kma_size_t size) {
+  /* Set size of block */
   SIZE(target) = size;
 
   void* node = CONTROL_BLOCK_FIRST_NODE(root_page->ptr);
 
   if (node == NULL) {
+    /* If there are no blocks in the list add it like this */
+
     CONTROL_BLOCK_FIRST_NODE(root_page->ptr) = target;
     PREV(target) = NULL;
     NEXT(target) = NULL;
   } else {
+    /* Find the block that should be on either side of the
+       newly inserted block */
+
     void* prev = NULL;
     while (node < target && node != NULL) {
       prev = node;
       node = NEXT(node);
     }
+
+    /* Add it to the linked list */
 
     if (node != NULL) {
       PREV(node) = target;
@@ -296,6 +318,8 @@ void coalesce(void* hdr) {
   void* prev = PREV(hdr);
   void* next = NEXT(hdr);
 
+  /* If the previous free block is adjacent and in the same page, coalesce */
+
   if (prev != NULL &&
       BASEADDR(prev) == BASEADDR(hdr) &&
       prev + ALLOC_HEADER_SIZE + SIZE(prev) == hdr) {
@@ -309,6 +333,8 @@ void coalesce(void* hdr) {
     again = TRUE;
   }
 
+  /* If the next free block is adjacent and in the same page, coalesce */
+
   if (next != NULL &&
       BASEADDR(hdr) == BASEADDR(next) &&
       hdr + ALLOC_HEADER_SIZE + SIZE(hdr) == next) {
@@ -321,9 +347,13 @@ void coalesce(void* hdr) {
     again = TRUE;
   }
 
+  /* If coalescing has ocurred, try to do it again */
+
   if (again == TRUE) {
     coalesce(hdr);
   } else {
+    /* If not, attempt to free page */
+
     kma_size_t page_size;
 
     if (BASEADDR(hdr) == root_page->ptr) {
@@ -332,7 +362,11 @@ void coalesce(void* hdr) {
       page_size = (*((kma_page_t**) BASEADDR(hdr)))->size;
     }
 
+    /* If the block takes up the whole page, it is ready to be freed */
+
     if (SIZE(hdr) == page_size - CONTROL_BLOCK_SIZE - ALLOC_HEADER_SIZE) {
+      /* Remove the block from the linked list */
+
       if (PREV(hdr) != NULL) {
         NEXT(PREV(hdr)) = NEXT(hdr);
       } else {
@@ -341,14 +375,19 @@ void coalesce(void* hdr) {
       if (NEXT(hdr) != NULL) {
         PREV(NEXT(hdr)) = PREV(hdr);
       }
+
+      /* If the page is the root page, make the page of the next free
+         block the new root page, otherwise simply free the page */
+
       if (BASEADDR(hdr) == root_page->ptr) {
-        free_page(root_page);
+        kma_page_t* root_page_temp = root_page;
         if (NEXT(hdr) != NULL) {
           root_page = *((kma_page_t**) BASEADDR(NEXT(hdr)));
           CONTROL_BLOCK_FIRST_NODE(root_page->ptr) = NEXT(hdr);
         } else {
           root_page = NULL;
         }
+        free_page(root_page_temp);
       } else {
         free_page(*((kma_page_t**) BASEADDR(hdr)));
       }
