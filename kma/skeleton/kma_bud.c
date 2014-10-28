@@ -69,7 +69,7 @@
 
  typedef struct {
   void* first;
-  void* mask;
+  kma_size_t mask;
  } kma_root_t;
 
 /************Global Variables*********************************************/
@@ -101,6 +101,34 @@ void dump() {
     i++;
     class_size >>= 1;
   }
+
+  printf("FIRST PAGE\n");
+
+  class_size = PAGESIZE;
+  int num_classes = 0;
+
+  while (class_size >= FREE_HEADER_SIZE) {
+    num_classes++;
+    class_size >>= 1;
+  }
+
+  kma_size_t control_block_size = 0x1;
+  while (control_block_size < num_classes * sizeof(kma_root_t) ||
+         control_block_size < ALLOC_HEADER_SIZE) {
+    control_block_size <<= 1;
+  }
+
+  void* node = root_page->ptr + control_block_size;
+
+  while (BASEADDR(node) == root_page->ptr) {
+    printf("%10s %p | BASEADDR(hdr) = %p; SIZE(hdr) = %#6x; NEXT(hdr) = %p;\n",
+           IS_ALLOCATED(node) ? "ALLOCATED" : "FREE",
+           node,
+           BASEADDR(node),
+           SIZE(node),
+           NEXT(node));
+    node += SIZE(node);
+  }
 }
 
 void*
@@ -124,8 +152,7 @@ kma_malloc(kma_size_t size)
 
     while (class_size >= FREE_HEADER_SIZE) {
       FIRST_FREE_NODE(num_classes) = NULL;
-      MASK(num_classes) = NULL;
-      MASK(num_classes) += class_size;
+      MASK(num_classes) = class_size;
       num_classes++;
       class_size >>= 1;
     }
@@ -158,7 +185,7 @@ kma_malloc(kma_size_t size)
 
   void* node = FIRST_FREE_NODE(i);
 
-  while (node == NULL && i >= 0) {
+  while (node == NULL && i > 0) {
     i--;
     node = FIRST_FREE_NODE(i);
   }
@@ -208,9 +235,49 @@ kma_free(void* ptr, kma_size_t size)
     class_size >>= 1;
   }
 
+  DEALLOCATE(hdr);
+
+  void* buddy = (void*) ((uintptr_t) hdr ^ MASK(i));
+  while (!IS_ALLOCATED(buddy) && SIZE(buddy) == class_size) {
+    if (buddy == root_page->ptr) {
+      break;
+    }
+
+    printf("buddy of %p found at %p\n", hdr, buddy);
+
+    /* Remove buddy from list */
+
+    void* prev = NULL;
+    void* node = FIRST_FREE_NODE(i);
+
+    while (node != buddy) {
+      prev = node;
+      node = NEXT(node);
+    }
+
+    if (prev == NULL) {
+      FIRST_FREE_NODE(i) = NEXT(buddy);
+    } else {
+      NEXT(prev) = NEXT(buddy);
+    }
+
+    if (buddy < hdr) {
+      hdr = buddy;
+      printf("hdr is now %p\n", hdr);
+    }
+
+    i--;
+    class_size <<= 1;
+    buddy = (void*) ((uintptr_t) hdr ^ MASK(i));
+  }
+
+  SET_SIZE(hdr, class_size);
   NEXT(hdr) = FIRST_FREE_NODE(i);
   FIRST_FREE_NODE(i) = hdr;
-  DEALLOCATE(hdr);
+
+  #ifdef VERBOSE
+  dump();
+  #endif
 }
 
 void create_block(void* hdr, kma_size_t size, int allocated) {
