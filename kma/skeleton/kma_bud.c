@@ -65,6 +65,8 @@
 #define PAYLOAD(hdr) ((void*) hdr + sizeof(kma_size_t))
 #define HEADER(payload) ((void*) payload - sizeof(kma_size_t))
 
+#define VERBOSE
+
  typedef struct {
   void* first;
   void* mask;
@@ -74,7 +76,7 @@
 static kma_page_t* root_page = NULL;
 
 /************Function Prototypes******************************************/
-void create_page(void* hdr, kma_size_t size);
+void create_block(void* hdr, kma_size_t size, int allocated);
 
 /************External Declaration*****************************************/
 
@@ -84,7 +86,7 @@ void dump() {
   kma_size_t class_size = PAGESIZE;
   int i = 0;
 
-  while (class_size > ALLOC_HEADER_SIZE) {
+  while (class_size >= ALLOC_HEADER_SIZE) {
     printf("CLASS SIZE %#x\n", class_size);
     void* node = FIRST_FREE_NODE(i);
     while (node != NULL) {
@@ -104,6 +106,10 @@ void dump() {
 void*
 kma_malloc(kma_size_t size)
 {
+  #ifdef VERBOSE
+  printf("about to allocate %#x\n", size);
+  #endif
+
   kma_size_t total_size;
 
   /* If first malloc, initialize necessary information */
@@ -125,17 +131,19 @@ kma_malloc(kma_size_t size)
     }
 
     kma_size_t control_block_size = 0x1;
-    while (control_block_size < num_classes * sizeof(void*) ||
+    while (control_block_size < num_classes * sizeof(kma_root_t) ||
            control_block_size < ALLOC_HEADER_SIZE) {
       control_block_size <<= 1;
     }
 
     total_size = control_block_size;
     while (total_size < PAGESIZE) {
-      create_page(root_page->ptr + total_size, total_size);
+      create_block(root_page->ptr + total_size, total_size, FALSE);
       total_size <<= 1;
     }
   }
+
+  printf("SIZE = %#x\n", size);
 
   kma_size_t optimal_size = PAGESIZE;
   int i = 0;
@@ -146,28 +154,42 @@ kma_malloc(kma_size_t size)
     optimal_size >>= 1;
   }
 
-  void* node = NULL;
+  printf("optimal_size = %#x; class_id = %d\n", optimal_size, i);
+
+  void* node = FIRST_FREE_NODE(i);
+
   while (node == NULL && i >= 0) {
-    node = FIRST_FREE_NODE(i);
     i--;
+    node = FIRST_FREE_NODE(i);
   }
 
   if (node == NULL) {
+    printf("nothing fits\n");
     kma_page_t* page = get_page();
-    create_page(page->ptr, PAGESIZE);
+    create_block(page->ptr, PAGESIZE, FALSE);
     node = page->ptr;
+    i = 0;
   }
 
-  create_page(node, optimal_size);
-  ALLOCATE(node);
+  kma_size_t target_size = SIZE(node);
+
+  printf("target_size = %#x\n", target_size);
+
+  /* Remove old block from list */
+
+  FIRST_FREE_NODE(i) = NEXT(node);
+
+  create_block(node, optimal_size, TRUE);
 
   total_size = optimal_size;
-  while (total_size < SIZE(node)) {
-    create_page(node + total_size, total_size);
+  while (total_size < target_size) {
+    create_block(node + total_size, total_size, FALSE);
     total_size <<= 1;
   }
 
+  #ifdef VERBOSE
   dump();
+  #endif
 
   return PAYLOAD(node);
 }
@@ -178,20 +200,23 @@ kma_free(void* ptr, kma_size_t size)
   ;
 }
 
-void create_page(void* hdr, kma_size_t size) {
+void create_block(void* hdr, kma_size_t size, int allocated) {
   kma_size_t class_size = PAGESIZE;
   int i = 0;
 
-  while ((class_size >> 1) >= size &&
-         (class_size >> 1) >= FREE_HEADER_SIZE) {
+  while (class_size != size) {
     i++;
     class_size >>= 1;
   }
 
-  DEALLOCATE(hdr);
   SET_SIZE(hdr, class_size);
-  NEXT(hdr) = FIRST_FREE_NODE(i);
-  FIRST_FREE_NODE(i) = hdr;
+  if (allocated) {
+    ALLOCATE(hdr);
+  } else {
+    DEALLOCATE(hdr);
+    NEXT(hdr) = FIRST_FREE_NODE(i);
+    FIRST_FREE_NODE(i) = hdr;
+  }
 }
 
 #endif // KMA_BUD

@@ -62,6 +62,8 @@
 #define NEXT(hdr) (*((void**) ((void*) hdr + sizeof(kma_size_t) + sizeof(void*))))
 #define HEADER(payload) ((void*) payload - sizeof(kma_size_t))
 
+// #define VERBOSE
+
 /************Global Variables*********************************************/
 static kma_page_t* root_page = NULL;
 
@@ -167,7 +169,9 @@ void dump() {
 void*
 kma_malloc(kma_size_t size)
 {
-  // printf("about to allocate %x\n", size);
+  #ifdef VERBOSE
+  printf("about to allocate %x\n", size);
+  #endif
 
   /* If first malloc, initialize necessary information */
   if (root_page == NULL) {
@@ -252,7 +256,9 @@ kma_malloc(kma_size_t size)
                                target_size - ALLOC_HEADER_SIZE - size);
   }
 
-  // dump();
+  #ifdef VERBOSE
+  dump();
+  #endif
 
   return ptr;
 }
@@ -260,7 +266,9 @@ kma_malloc(kma_size_t size)
 void
 kma_free(void* ptr, kma_size_t size)
 {
-  // printf("about to free %x at %p\n", size, ptr);
+  #ifdef VERBOSE
+  printf("about to free %x at %p\n", size, ptr);
+  #endif
 
   /* Simply insert a free block at the position of the
      allocated block and coalesce */
@@ -269,7 +277,9 @@ kma_free(void* ptr, kma_size_t size)
   add_and_insert_free_header(hdr, SIZE(hdr));
   coalesce(hdr);
 
-  // dump();
+  #ifdef VERBOSE
+  dump();
+  #endif
 }
 
 void add_and_insert_free_header(void* target, kma_size_t size) {
