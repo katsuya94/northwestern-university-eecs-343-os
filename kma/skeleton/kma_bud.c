@@ -197,7 +197,20 @@ kma_malloc(kma_size_t size)
 void 
 kma_free(void* ptr, kma_size_t size)
 {
-  ;
+  void* hdr = HEADER(ptr);
+  printf("about to free %#x where hdr = %p\n", size, hdr);
+
+  kma_size_t class_size = PAGESIZE;
+  int i = 0;
+
+  while (class_size != SIZE(hdr)) {
+    i++;
+    class_size >>= 1;
+  }
+
+  NEXT(hdr) = FIRST_FREE_NODE(i);
+  FIRST_FREE_NODE(i) = hdr;
+  DEALLOCATE(hdr);
 }
 
 void create_block(void* hdr, kma_size_t size, int allocated) {
