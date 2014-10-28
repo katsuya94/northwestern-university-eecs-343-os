@@ -38,6 +38,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 /************Private include**********************************************/
 #include "kma_page.h"
@@ -61,12 +62,13 @@
                             (size & ~((kma_size_t) 0x1)) | \
                             ((*((kma_size_t*) hdr)) & ((kma_size_t) 0x1))
 #define FIRST_FREE_NODE(class_id) (((kma_root_t*) \
-  ((void*) root_page->ptr + sizeof(kma_page_ptr_t*)))[class_id].first)
+  ((void*) root_page->ptr + sizeof(kma_page_ptr_t*) * 2))[class_id].first)
 #define MASK(class_id) (((kma_root_t*) \
-  ((void*) root_page->ptr + sizeof(kma_page_ptr_t*)))[class_id].mask)
+  ((void*) root_page->ptr + sizeof(kma_page_ptr_t*) * 2))[class_id].mask)
 #define PAYLOAD(hdr) ((void*) hdr + sizeof(kma_size_t))
 #define HEADER(payload) ((void*) payload - sizeof(kma_size_t))
 #define PAGE_PTR_LIST_ROOT (*((kma_page_ptr_t**) root_page->ptr))
+#define PAGE_PTR_FREE_LIST_ROOT (*((kma_page_ptr_t**) ((void*) root_page->ptr + sizeof(kma_page_ptr_t*))))
 
 #define VERBOSE
 
@@ -77,7 +79,9 @@
 
  typedef struct kma_page_ptr_t {
   kma_page_t* page;
+  struct kma_page_ptr_t* next;
   struct kma_page_ptr_t* prev;
+  int allocated;
  } kma_page_ptr_t;
 
 /************Global Variables*********************************************/
@@ -93,10 +97,9 @@ void create_block(void* hdr, kma_size_t size, int allocated);
 void dump_page(void* node) {
   void* base = BASEADDR(node);
   while (BASEADDR(node) == base) {
-    printf("%10s %p | BASEADDR(hdr) = %p; SIZE(hdr) = %#6x; NEXT(hdr) = %p;\n",
+    printf("%10s %p | SIZE(hdr) = %#6x; NEXT(hdr) = %p;\n",
            IS_ALLOCATED(node) ? "ALLOCATED" : "FREE",
            node,
-           BASEADDR(node),
            SIZE(node),
            NEXT(node));
     node += SIZE(node);
@@ -104,24 +107,12 @@ void dump_page(void* node) {
 }
 
 void dump() {
-  kma_size_t class_size = PAGESIZE;
-  // int i = 0;
+  if (root_page == NULL) {
+    printf("EMPTY\n");
+    return;
+  }
 
-  // while (class_size >= ALLOC_HEADER_SIZE) {
-  //   printf("CLASS SIZE %#x\n", class_size);
-  //   void* node = FIRST_FREE_NODE(i);
-  //   while (node != NULL) {
-  //     printf("%10s %p | BASEADDR(hdr) = %p; SIZE(hdr) = %#6x; NEXT(hdr) = %p;\n",
-  //            IS_ALLOCATED(node) ? "ALLOCATED" : "FREE",
-  //            node,
-  //            BASEADDR(node),
-  //            SIZE(node),
-  //            NEXT(node));
-  //     node = NEXT(node);
-  //   }
-  //   i++;
-  //   class_size >>= 1;
-  // }
+  kma_size_t class_size = PAGESIZE;
 
   class_size = PAGESIZE;
   int num_classes = 0;
@@ -137,11 +128,22 @@ void dump() {
     control_block_size <<= 1;
   }
 
+  printf("USED PAGE_PTRS\n");
+
   kma_page_ptr_t* node = PAGE_PTR_LIST_ROOT;
 
   while (node != NULL) {
-    printf("PAGE %d\n", node->page->id);
+    printf("Used kma_page_ptr_t at %p where allocated = %d\n", node, node->allocated);
     dump_page(node->page->ptr);
+    node = node->prev;
+  }
+
+  printf("WASTE PAGE PTRS\n");
+
+  node = PAGE_PTR_FREE_LIST_ROOT;
+
+  while (node != NULL) {
+    printf("Waste kma_page_ptr_t at %p where allocated = %d\n", node, node->allocated);
     node = node->prev;
   }
 }
@@ -173,9 +175,8 @@ kma_malloc(kma_size_t size)
     }
 
     PAGE_PTR_LIST_ROOT = NULL;
+    PAGE_PTR_FREE_LIST_ROOT = NULL;
   }
-
-  printf("SIZE = %#x\n", size);
 
   kma_size_t optimal_size = PAGESIZE;
   int i = 0;
@@ -186,8 +187,6 @@ kma_malloc(kma_size_t size)
     optimal_size >>= 1;
   }
 
-  printf("optimal_size = %#x; class_id = %d\n", optimal_size, i);
-
   void* node = FIRST_FREE_NODE(i);
 
   while (node == NULL && i > 0) {
@@ -196,19 +195,28 @@ kma_malloc(kma_size_t size)
   }
 
   if (node == NULL) {
-    printf("nothing fits\n");
     kma_page_t* page = get_page();
 
     kma_page_ptr_t* page_ptr;
-    if (PAGE_PTR_LIST_ROOT == NULL ||
-        BASEADDR(PAGE_PTR_LIST_ROOT + sizeof(kma_page_ptr_t) * 2) !=
-        BASEADDR(PAGE_PTR_LIST_ROOT)) {
+    if (PAGE_PTR_FREE_LIST_ROOT != NULL) {
+      page_ptr = PAGE_PTR_LIST_ROOT;
+      PAGE_PTR_LIST_ROOT = page_ptr->prev;
+    } else if (PAGE_PTR_LIST_ROOT == NULL ||
+               BASEADDR(PAGE_PTR_LIST_ROOT + sizeof(kma_page_ptr_t) * 2) !=
+               BASEADDR(PAGE_PTR_LIST_ROOT)) {
       kma_page_t* ptr_page = get_page();
-      page_ptr = ptr_page->ptr;
+      memset(ptr_page->ptr, '\0', PAGESIZE);
+      (*((kma_page_t**) (ptr_page->ptr))) = ptr_page;
+      page_ptr = ptr_page->ptr + sizeof(kma_page_t*);
     } else {
-      page_ptr = PAGE_PTR_LIST_ROOT + sizeof(kma_page_ptr_t);
+      page_ptr = PAGE_PTR_LIST_ROOT + 1;
     }
+    if(PAGE_PTR_LIST_ROOT != NULL) {
+      PAGE_PTR_LIST_ROOT->next = page_ptr;
+    }
+    page_ptr->allocated = 2;
     page_ptr->prev = PAGE_PTR_LIST_ROOT;
+    page_ptr->next = NULL;
     PAGE_PTR_LIST_ROOT = page_ptr;
 
     page_ptr->page = page;
@@ -219,8 +227,6 @@ kma_malloc(kma_size_t size)
   }
 
   kma_size_t target_size = SIZE(node);
-
-  printf("target_size = %#x\n", target_size);
 
   /* Remove old block from list */
 
@@ -245,7 +251,10 @@ void
 kma_free(void* ptr, kma_size_t size)
 {
   void* hdr = HEADER(ptr);
+
+  #ifdef VERBOSE
   printf("about to free %#x where hdr = %p\n", size, hdr);
+  #endif
 
   kma_size_t class_size = PAGESIZE;
   int i = 0;
@@ -265,8 +274,6 @@ kma_free(void* ptr, kma_size_t size)
       break;
     }
 
-    printf("buddy of %p found at %p\n", hdr, buddy);
-
     /* Remove buddy from list */
 
     void* prev = NULL;
@@ -285,7 +292,6 @@ kma_free(void* ptr, kma_size_t size)
 
     if (buddy < hdr) {
       hdr = buddy;
-      printf("hdr is now %p\n", hdr);
     }
 
     i--;
@@ -293,24 +299,76 @@ kma_free(void* ptr, kma_size_t size)
     buddy = (void*) ((uintptr_t) hdr ^ MASK(i));
   }
 
-  /* If a free block spans an entire page free the page */
+  /* If a free block spans an entire page, free the page */
 
   if (class_size == PAGESIZE) {
-    kma_page_ptr_t* next = NULL;
     kma_page_ptr_t* node = PAGE_PTR_LIST_ROOT;
 
     while (hdr != node->page->ptr) {
-      next = node;
       node = node->prev;
     }
 
-    if (next != NULL) {
-      next->prev = node->prev;
+    if (node->next != NULL) {
+      node->next->prev = node->prev;
     } else {
       PAGE_PTR_LIST_ROOT = node->prev;
     }
 
+    if (node->prev != NULL) {
+      node->prev->next = node->next;
+    }
+
+    node->next = NULL;
+    node->prev = PAGE_PTR_FREE_LIST_ROOT;
+    if (node->prev != NULL) {
+      node->prev->next = node;
+    }
+    node->allocated = 1;
+
+    PAGE_PTR_FREE_LIST_ROOT = node;
+
     free_page(node->page);
+
+    void* base = BASEADDR(node);
+    kma_page_ptr_t* scanner = base + sizeof(kma_page_t*);
+
+    int used = FALSE;
+
+    while (BASEADDR(scanner) == base) {
+      if (scanner->allocated == 2) {
+        used = TRUE;
+        break;
+      } else if (scanner->allocated == 0) {
+        break;
+      }
+      scanner++;
+    }
+
+    if (used == FALSE) {
+      scanner = base + sizeof(kma_page_t*);
+      while (BASEADDR(scanner) == base) {
+        if (scanner->allocated == 0) {
+          break;
+        }
+        if (scanner->next != NULL) {
+          scanner->next->prev = scanner->prev;
+        } else {
+          PAGE_PTR_FREE_LIST_ROOT = scanner->prev;
+        }
+        if (scanner->prev != NULL) {
+          scanner->prev->next = scanner->next;
+        }
+
+        scanner++;
+      }
+
+      free_page(*((kma_page_t**) base));
+
+      if (PAGE_PTR_LIST_ROOT == NULL && PAGE_PTR_FREE_LIST_ROOT == NULL) {
+        free_page(root_page);
+        root_page = NULL;
+      }
+    }
   } else {
     SET_SIZE(hdr, class_size);
     NEXT(hdr) = FIRST_FREE_NODE(i);
