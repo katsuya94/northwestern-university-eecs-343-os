@@ -70,7 +70,7 @@
 #define PAGE_PTR_LIST_ROOT (*((kma_page_ptr_t**) root_page->ptr))
 #define PAGE_PTR_FREE_LIST_ROOT (*((kma_page_ptr_t**) ((void*) root_page->ptr + sizeof(kma_page_ptr_t*))))
 
-#define VERBOSE
+// #define VERBOSE
 
  typedef struct {
   void* first;
@@ -133,7 +133,7 @@ void dump() {
   kma_page_ptr_t* node = PAGE_PTR_LIST_ROOT;
 
   while (node != NULL) {
-    printf("Used kma_page_ptr_t at %p where allocated = %d\n", node, node->allocated);
+    printf(" USED %p | id = %d; allocated = %d; prev = %p; next = %p;\n", node, node->page->id, node->allocated, node->prev, node->next);
     dump_page(node->page->ptr);
     node = node->prev;
   }
@@ -143,7 +143,7 @@ void dump() {
   node = PAGE_PTR_FREE_LIST_ROOT;
 
   while (node != NULL) {
-    printf("Waste kma_page_ptr_t at %p where allocated = %d\n", node, node->allocated);
+    printf("WASTE %p | allocated = %d prev = %p; next = %p;\n", node, node->allocated, node->prev, node->next);
     node = node->prev;
   }
 }
@@ -199,24 +199,40 @@ kma_malloc(kma_size_t size)
 
     kma_page_ptr_t* page_ptr;
     if (PAGE_PTR_FREE_LIST_ROOT != NULL) {
-      page_ptr = PAGE_PTR_LIST_ROOT;
-      PAGE_PTR_LIST_ROOT = page_ptr->prev;
-    } else if (PAGE_PTR_LIST_ROOT == NULL ||
-               BASEADDR(PAGE_PTR_LIST_ROOT + sizeof(kma_page_ptr_t) * 2) !=
-               BASEADDR(PAGE_PTR_LIST_ROOT)) {
+      page_ptr = PAGE_PTR_FREE_LIST_ROOT;
+      PAGE_PTR_FREE_LIST_ROOT = page_ptr->prev;
+    } else {
       kma_page_t* ptr_page = get_page();
       memset(ptr_page->ptr, '\0', PAGESIZE);
       (*((kma_page_t**) (ptr_page->ptr))) = ptr_page;
-      page_ptr = ptr_page->ptr + sizeof(kma_page_t*);
-    } else {
-      page_ptr = PAGE_PTR_LIST_ROOT + 1;
+      kma_page_ptr_t* scanner = ptr_page->ptr + sizeof(kma_page_t*);
+      while (BASEADDR(scanner + 1) == ptr_page->ptr) {
+        scanner->allocated = FALSE;
+        scanner->next = NULL;
+        scanner->prev = PAGE_PTR_FREE_LIST_ROOT;
+        if (scanner->prev != NULL) {
+          scanner->prev->next = scanner;
+        }
+        PAGE_PTR_FREE_LIST_ROOT = scanner;
+        scanner++;
+      }
+      page_ptr = (kma_page_ptr_t*) (ptr_page->ptr + sizeof(kma_page_t*));
+      if (page_ptr->next != NULL) {
+        page_ptr->next->prev = page_ptr->prev;
+      } else {
+        PAGE_PTR_FREE_LIST_ROOT = page_ptr;
+      }
+      if (page_ptr->prev != NULL) {
+        page_ptr->prev->next = page_ptr;
+      }
     }
-    if(PAGE_PTR_LIST_ROOT != NULL) {
-      PAGE_PTR_LIST_ROOT->next = page_ptr;
-    }
-    page_ptr->allocated = 2;
-    page_ptr->prev = PAGE_PTR_LIST_ROOT;
+
+    page_ptr->allocated = TRUE;
     page_ptr->next = NULL;
+    page_ptr->prev = PAGE_PTR_LIST_ROOT;
+    if (page_ptr->prev != NULL) {
+      page_ptr->prev->next = page_ptr;
+    }
     PAGE_PTR_LIST_ROOT = page_ptr;
 
     page_ptr->page = page;
@@ -266,7 +282,7 @@ kma_free(void* ptr, kma_size_t size)
 
   DEALLOCATE(hdr);
 
-  void* buddy = (void*) ((uintptr_t) hdr ^ MASK(i));
+  void* buddy = (void*) ((long) hdr ^ MASK(i));
   while (!IS_ALLOCATED(buddy) &&
          SIZE(buddy) == class_size &&
          BASEADDR(buddy) == BASEADDR(hdr)) {
@@ -296,7 +312,7 @@ kma_free(void* ptr, kma_size_t size)
 
     i--;
     class_size <<= 1;
-    buddy = (void*) ((uintptr_t) hdr ^ MASK(i));
+    buddy = (void*) ((long) hdr ^ MASK(i));
   }
 
   /* If a free block spans an entire page, free the page */
@@ -323,7 +339,7 @@ kma_free(void* ptr, kma_size_t size)
     if (node->prev != NULL) {
       node->prev->next = node;
     }
-    node->allocated = 1;
+    node->allocated = FALSE;
 
     PAGE_PTR_FREE_LIST_ROOT = node;
 
@@ -334,11 +350,9 @@ kma_free(void* ptr, kma_size_t size)
 
     int used = FALSE;
 
-    while (BASEADDR(scanner) == base) {
-      if (scanner->allocated == 2) {
+    while (BASEADDR(scanner + 1) == base) {
+      if (scanner->allocated == TRUE) {
         used = TRUE;
-        break;
-      } else if (scanner->allocated == 0) {
         break;
       }
       scanner++;
@@ -347,9 +361,6 @@ kma_free(void* ptr, kma_size_t size)
     if (used == FALSE) {
       scanner = base + sizeof(kma_page_t*);
       while (BASEADDR(scanner) == base) {
-        if (scanner->allocated == 0) {
-          break;
-        }
         if (scanner->next != NULL) {
           scanner->next->prev = scanner->prev;
         } else {
@@ -358,7 +369,6 @@ kma_free(void* ptr, kma_size_t size)
         if (scanner->prev != NULL) {
           scanner->prev->next = scanner->next;
         }
-
         scanner++;
       }
 
