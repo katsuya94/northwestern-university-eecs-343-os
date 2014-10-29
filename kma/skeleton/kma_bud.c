@@ -53,6 +53,10 @@
 
 #define FREE_HEADER_SIZE (sizeof(kma_size_t) + sizeof(void*))
 #define ALLOC_HEADER_SIZE (sizeof(kma_size_t))
+
+/* Since sizes never use the least significant bit,
+   instead, use it to mark its state of allocation */
+
 #define IS_ALLOCATED(hdr) ((*((kma_size_t*) hdr)) & ((kma_size_t) 0x1))
 #define ALLOCATE(hdr) *((kma_size_t*) hdr) |= (kma_size_t) 0x1
 #define DEALLOCATE(hdr) *((kma_size_t*) hdr) &= ~((kma_size_t) 0x1)
@@ -61,12 +65,20 @@
 #define SET_SIZE(hdr, size) *((kma_size_t*) hdr) = \
                             (size & ~((kma_size_t) 0x1)) | \
                             ((*((kma_size_t*) hdr)) & ((kma_size_t) 0x1))
+
+/* The mask component is used to XOR and get the
+   buddy */
+
 #define FIRST_FREE_NODE(class_id) (((kma_root_t*) \
   ((void*) root_page->ptr + sizeof(kma_page_ptr_t*) * 2))[class_id].first)
 #define MASK(class_id) (((kma_root_t*) \
   ((void*) root_page->ptr + sizeof(kma_page_ptr_t*) * 2))[class_id].mask)
+
 #define PAYLOAD(hdr) ((void*) hdr + sizeof(kma_size_t))
 #define HEADER(payload) ((void*) payload - sizeof(kma_size_t))
+
+/* Gives access to the page data structure */
+
 #define PAGE_PTR_LIST_ROOT (*((kma_page_ptr_t**) root_page->ptr))
 #define PAGE_PTR_FREE_LIST_ROOT (*((kma_page_ptr_t**) ((void*) root_page->ptr + sizeof(kma_page_ptr_t*))))
 
@@ -112,22 +124,6 @@ void dump() {
     return;
   }
 
-  kma_size_t class_size = PAGESIZE;
-
-  class_size = PAGESIZE;
-  int num_classes = 0;
-
-  while (class_size >= FREE_HEADER_SIZE) {
-    num_classes++;
-    class_size >>= 1;
-  }
-
-  kma_size_t control_block_size = 0x1;
-  while (control_block_size < num_classes * sizeof(kma_root_t) ||
-         control_block_size < ALLOC_HEADER_SIZE) {
-    control_block_size <<= 1;
-  }
-
   printf("USED PAGE_PTRS\n");
 
   kma_page_ptr_t* node = PAGE_PTR_LIST_ROOT;
@@ -162,7 +158,8 @@ kma_malloc(kma_size_t size)
   if (root_page == NULL) {
     root_page = get_page();
 
-    /* Figure out how many size classes there should be */
+    /* Figure out how many size classes there should be
+       and initialize pointer and mask for each class */
 
     kma_size_t class_size = PAGESIZE;
     int num_classes = 0;
@@ -174,9 +171,13 @@ kma_malloc(kma_size_t size)
       class_size >>= 1;
     }
 
+    /* Initialize pointers to the page data structure */
+
     PAGE_PTR_LIST_ROOT = NULL;
     PAGE_PTR_FREE_LIST_ROOT = NULL;
   }
+
+  /* Find the optimal size for the requested block */
 
   kma_size_t optimal_size = PAGESIZE;
   int i = 0;
@@ -187,6 +188,9 @@ kma_malloc(kma_size_t size)
     optimal_size >>= 1;
   }
 
+  /* If there is no free blocks in the optimal size
+     class, find the next largest class that does */
+
   void* node = FIRST_FREE_NODE(i);
 
   while (node == NULL && i > 0) {
@@ -194,18 +198,40 @@ kma_malloc(kma_size_t size)
     node = FIRST_FREE_NODE(i);
   }
 
+  /* If still no candidate is found, allocate a new page */
+
   if (node == NULL) {
     kma_page_t* page = get_page();
 
+    /* Determine where to store the entry in the page data
+       structure */
+
     kma_page_ptr_t* page_ptr;
+
     if (PAGE_PTR_FREE_LIST_ROOT != NULL) {
+      /* If there are unused entries in the page data
+         structure, remove it from the unused entry
+         list */
       page_ptr = PAGE_PTR_FREE_LIST_ROOT;
       PAGE_PTR_FREE_LIST_ROOT = page_ptr->prev;
     } else {
+      /* If not, allocate a new page for the page data
+         structure */
       kma_page_t* ptr_page = get_page();
+
+      /* Clear the page */
       memset(ptr_page->ptr, '\0', PAGESIZE);
+
+      /* At the beginning of the page, point back to its page
+         struct */
       (*((kma_page_t**) (ptr_page->ptr))) = ptr_page;
+
+      /* Start scanning from after the page struct pointer
+         and add it to the list of unused page data structure
+         entries */
+
       kma_page_ptr_t* scanner = ptr_page->ptr + sizeof(kma_page_t*);
+
       while (BASEADDR(scanner + 1) == ptr_page->ptr) {
         scanner->allocated = FALSE;
         scanner->next = NULL;
@@ -216,7 +242,12 @@ kma_malloc(kma_size_t size)
         PAGE_PTR_FREE_LIST_ROOT = scanner;
         scanner++;
       }
+
+      /* Take the first entry of the new page data structure
+         page and remove it */
+
       page_ptr = (kma_page_ptr_t*) (ptr_page->ptr + sizeof(kma_page_t*));
+
       if (page_ptr->next != NULL) {
         page_ptr->next->prev = page_ptr->prev;
       } else {
@@ -227,6 +258,11 @@ kma_malloc(kma_size_t size)
       }
     }
 
+    /* Point the entry to the newly allocated page's page struct,
+       mark the entry as allocated and add it to the used list */
+
+    page_ptr->page = page;
+
     page_ptr->allocated = TRUE;
     page_ptr->next = NULL;
     page_ptr->prev = PAGE_PTR_LIST_ROOT;
@@ -235,7 +271,7 @@ kma_malloc(kma_size_t size)
     }
     PAGE_PTR_LIST_ROOT = page_ptr;
 
-    page_ptr->page = page;
+    /* Create a block spanning the page and use it */
 
     create_block(page->ptr, PAGESIZE, FALSE);
     node = page->ptr;
@@ -244,11 +280,13 @@ kma_malloc(kma_size_t size)
 
   kma_size_t target_size = SIZE(node);
 
-  /* Remove old block from list */
+  /* Remove the target block from its free list */
 
   FIRST_FREE_NODE(i) = NEXT(node);
 
   create_block(node, optimal_size, TRUE);
+
+  /* Fill up the remaining space with power of 2 blocks */
 
   total_size = optimal_size;
   while (total_size < target_size) {
@@ -272,6 +310,8 @@ kma_free(void* ptr, kma_size_t size)
   printf("about to free %#x where hdr = %p\n", size, hdr);
   #endif
 
+  /* Find the appropriate size class */
+
   kma_size_t class_size = PAGESIZE;
   int i = 0;
 
@@ -282,7 +322,11 @@ kma_free(void* ptr, kma_size_t size)
 
   DEALLOCATE(hdr);
 
+  /* Attempt to find buddy, ensure that the buddy is in
+     the same page, has the same size, and is free */
+
   void* buddy = (void*) ((long) hdr ^ MASK(i));
+
   while (!IS_ALLOCATED(buddy) &&
          SIZE(buddy) == class_size &&
          BASEADDR(buddy) == BASEADDR(hdr)) {
@@ -290,7 +334,7 @@ kma_free(void* ptr, kma_size_t size)
       break;
     }
 
-    /* Remove buddy from list */
+    /* Find the node previous to buddy */
 
     void* prev = NULL;
     void* node = FIRST_FREE_NODE(i);
@@ -300,15 +344,23 @@ kma_free(void* ptr, kma_size_t size)
       node = NEXT(node);
     }
 
+    /* Remove buddy from list */
+
     if (prev == NULL) {
       FIRST_FREE_NODE(i) = NEXT(buddy);
     } else {
       NEXT(prev) = NEXT(buddy);
     }
 
+    /* The beginning of the coalesced block should be
+       the lesser one */
+
     if (buddy < hdr) {
       hdr = buddy;
     }
+
+    /* Set up for next iteration, repeat until no
+       buddy is found */
 
     i--;
     class_size <<= 1;
@@ -318,11 +370,16 @@ kma_free(void* ptr, kma_size_t size)
   /* If a free block spans an entire page, free the page */
 
   if (class_size == PAGESIZE) {
+    /* Find the page data structure entry corresponding to
+       this page */
+
     kma_page_ptr_t* node = PAGE_PTR_LIST_ROOT;
 
     while (hdr != node->page->ptr) {
       node = node->prev;
     }
+
+    /* Remove page data structure entry from the used list */
 
     if (node->next != NULL) {
       node->next->prev = node->prev;
@@ -334,16 +391,22 @@ kma_free(void* ptr, kma_size_t size)
       node->prev->next = node->next;
     }
 
+    /* Add it to the unused list */
+
+    node->allocated = FALSE;
     node->next = NULL;
     node->prev = PAGE_PTR_FREE_LIST_ROOT;
     if (node->prev != NULL) {
       node->prev->next = node;
     }
-    node->allocated = FALSE;
-
     PAGE_PTR_FREE_LIST_ROOT = node;
 
+    /* Free the page */
+
     free_page(node->page);
+
+    /* Scan the page of the page data structure to see if
+       any entries are in use */
 
     void* base = BASEADDR(node);
     kma_page_ptr_t* scanner = base + sizeof(kma_page_t*);
@@ -359,6 +422,8 @@ kma_free(void* ptr, kma_size_t size)
     }
 
     if (used == FALSE) {
+      /* If not, remove them all from the unused list */
+
       scanner = base + sizeof(kma_page_t*);
       while (BASEADDR(scanner) == base) {
         if (scanner->next != NULL) {
@@ -372,14 +437,24 @@ kma_free(void* ptr, kma_size_t size)
         scanner++;
       }
 
+      /* Then, free the page data structure page */
+
       free_page(*((kma_page_t**) base));
 
+      /* If there are no unused or used page data structure
+         entries */
+
       if (PAGE_PTR_LIST_ROOT == NULL && PAGE_PTR_FREE_LIST_ROOT == NULL) {
+        /* Free the root page, next time everything must
+           be re-initialized */
         free_page(root_page);
         root_page = NULL;
       }
     }
   } else {
+    /* Add the coalesced block to the appropriate free
+       list */
+
     SET_SIZE(hdr, class_size);
     NEXT(hdr) = FIRST_FREE_NODE(i);
     FIRST_FREE_NODE(i) = hdr;
@@ -391,6 +466,8 @@ kma_free(void* ptr, kma_size_t size)
 }
 
 void create_block(void* hdr, kma_size_t size, int allocated) {
+  /* Find the appropriate size class */
+
   kma_size_t class_size = PAGESIZE;
   int i = 0;
 
@@ -399,7 +476,12 @@ void create_block(void* hdr, kma_size_t size, int allocated) {
     class_size >>= 1;
   }
 
+  /* Set size */
   SET_SIZE(hdr, class_size);
+
+  /* Simply mark as allocated or mark as unallocated
+     and add to free list */
+
   if (allocated) {
     ALLOCATE(hdr);
   } else {
