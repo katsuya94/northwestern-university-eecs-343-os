@@ -1,0 +1,30 @@
+Kernel Memory Allocation - Buddy System 
+---------------------------------------
+Desgin: 
+Two data structures were used - One to keep track of the free list which was a list of free blocks of memory. The next data structure was used for the first page that is being referenced. 
+The kma_malloc was implemented using the following algorithm: 
+1. Initialize the necessary information. 
+2. Check to see how many size clasees there should be to initialize the pointers.
+3. Find the optimal size for the requested block
+	if there is no free optimal size class available then find the next largest size class. 
+	Worst case, allocate a new page. 
+4. If there are unused entries in the page data structure, remove it. 
+5. Allocate a new page and start scanning from after the page struct pointer and add it to teh list of unused page structure entries. 
+6. Remove the first entry and fill the rest with power of 2 blocks. 
+
+The kma_free() function was implemented to free the memory. The algorithm ensures that the buddy is in the same page and has the same size and is free. Remove the buddy from the list and repeat until the no buddy is found. In case the free block spans the entire page, free the page. Next make sure that none of the pages are in use, if they aren't then remove them from the list and free the page data structure. Once the page is freed, add it to the appropriate free list. 
+
+Kernel Memory Allocation - Resource Mapping  
+--------------------------------------------
+We used the first fit algorithm in order to implement the first fit algorithm. kma_malloc was implemented by using sequential search to look for the first available block and allocating the pages to the first block that was big enough to fit the page. 
+
+kma_free was implemented by inserting the free block  at the position of the allocated block coalesing. 
+--------------------------------------------------------------------------
+PERFORMANCE: 
+The buddy system showed better performance in terms of time and space. You can see this from the plots. 
+
+
+
+
+
+
