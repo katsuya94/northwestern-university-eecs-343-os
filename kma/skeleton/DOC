@@ -1,30 +1,63 @@
 Kernel Memory Allocation - Buddy System 
----------------------------------------
+---
 Desgin: 
-Two data structures were used - One to keep track of the free list which was a list of free blocks of memory. The next data structure was used for the first page that is being referenced. 
-The kma_malloc was implemented using the following algorithm: 
-1. Initialize the necessary information. 
-2. Check to see how many size clasees there should be to initialize the pointers.
-3. Find the optimal size for the requested block
-	if there is no free optimal size class available then find the next largest size class. 
-	Worst case, allocate a new page. 
-4. If there are unused entries in the page data structure, remove it. 
-5. Allocate a new page and start scanning from after the page struct pointer and add it to teh list of unused page structure entries. 
-6. Remove the first entry and fill the rest with power of 2 blocks. 
+Two data structures
+* Segregated unidirectional linked lists for each power of two size class
+  - The roots of these lists are stored in the root page
+  - The list elements are the headers of the free blocks
+  - The smallest size class is larger than the size of the header
+  - A linked list is a good choice for this, as all blocks in the list are equivalent
+    * There is no need to search through
+* A free list and an used list for page bookkeeping structs
+  - Both are bidirectional linked lists
+  - When a new data page needs to be allocated but there are no free bookkeeping entries
+    * Allocate a new page full of free bookkeeping entries
+    * Store pointer to page struct of bookkeeping page at beginning of page
+  - Mark bookkeeping entries as free/used as needed when allocating data pages
+  - When freeing a data page, check whether any entries in the corresponding bookkeeping page are in use
+    * If not, then free the bookkeeping page
+    * This check is linear with the size of the page, but is only performed if a page is being freed, so is not a major waste
+Separating the pages into data, bookkeeping, and the root page favors simplicity over space utilization.
 
-The kma_free() function was implemented to free the memory. The algorithm ensures that the buddy is in the same page and has the same size and is free. Remove the buddy from the list and repeat until the no buddy is found. In case the free block spans the entire page, free the page. Next make sure that none of the pages are in use, if they aren't then remove them from the list and free the page data structure. Once the page is freed, add it to the appropriate free list. 
+Note that the system has poor utilization in the common case of power of 2 requests (the headers require the block to be bigger).
 
-Kernel Memory Allocation - Resource Mapping  
---------------------------------------------
-We used the first fit algorithm in order to implement the first fit algorithm. kma_malloc was implemented by using sequential search to look for the first available block and allocating the pages to the first block that was big enough to fit the page. 
+Since it is useful when coalescing to know the size and allocation status of its buddy, the following is implemented. The header consists of a size, and a next pointer (written over when allocated). The size is useful for determining whether a buddy can be coalesced, however, to determine whether it is allocated or free, a more naive implementation might search through the free list (linear time). Instead, since the block sizes are in powers of two, and there is no size class with size 1, we can use the least significant bit of the size to indicate allocation status (constant time).
 
-kma_free was implemented by inserting the free block  at the position of the allocated block coalesing. 
---------------------------------------------------------------------------
-PERFORMANCE: 
-The buddy system showed better performance in terms of time and space. You can see this from the plots. 
+Once finding the correct size class, finding a suitable block is a constant time (pull the first available off the free list)
 
+Finding the bookkeeping entry corresponding to a page is a linear time operation, however, this only happens in the case that a freed block coalesces to the size of the page (rare).
 
+The root page is freed when both bookkeeping lists are empty.
 
+Indeed, the common case for allocating and freeing in this implementation runs in constant time.
 
+Kernel Memory Allocation - Resource Map
+---
+Design:
+One data structure
+* Sorted bidirectional free list
+  - Headers consist of the size, as well as previous and next pointers.
+  - For a small gain in utilization, previous and next pointers are overwritten by data in allocated blocks
+  - The bidirectional list allows for faster insertion and deletion (finding neighbors)
+  - It is sorted by memory address
+    * When freeing a block if adjacent blocks are in different pages, then the page is not in use and can be freed (constant time check)
+This is a rather naive implementation using first fit.
 
+Finding a suitable block is worst case linear time.
+
+For clarity, when a new page is allocated it is allocated as a huge free block. Afterwards kma_malloc accesses it as it would any other block.
+
+The block left behind by allocating a smaller block in a larger block must be re-added to the free list. This is not optimal, as it should still exist in the same space. If the remaining block would be too small, the whole block is allocated instead.
+
+Insertion is a linear time operation, as it must do comparisons to preserve order.
+
+Pages point to their corresponding page structs at their beginning. This is necessary for bookkeeping.
+
+Since small blocks have a chance of being filled by a near-optimal size, space utilization is relatively good. However, all the linear time operations slow the allocator down.
+
+---
+Comparison
+
+Resource Map gives better space utilization, but worse runtime, even though it is first fit.
+The Buddy System gives great runtime in comparison, however, the overhead and internal fragmentation adds up to a considerable utilization loss.
 
